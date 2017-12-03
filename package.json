@@ -1,8 +1,8 @@
 {
-  "name": "nwjs-bitsy",
-  "version": "0.0.0",
+  "name": "bitsy",
+  "version": "4.3.0",
   "description": "NW.js wrapper for bitsy",
-  "main": "html/editor.html",
+  "main": "app/editor.html",
   "window": {
     "frame": true,
     "toolbar": true,
@@ -12,33 +12,34 @@
     "kiosk": false
   },
   "scripts": {
-    "app": "./build/nwjs-project/linux32/nwjs-project && echo",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "gulp build",
+    "fetch": "gulp fetch",
+    "serve": "gulp serve"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/UmbraEngineering/nwjs-template"
   },
   "author": "",
-  "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/UmbraEngineering/nwjs-template/issues"
-  },
-  "homepage": "https://github.com/UmbraEngineering/nwjs-template",
+  "license": "",
+  "homepage": "",
   "devDependencies": {
     "browserify": "^7.0.2",
     "del": "~1.1.0",
     "gulp": "^3.8.10",
     "gulp-concat": "^2.4.1",
     "gulp-cssmin": "^0.1.6",
+    "gulp-download-stream": "0.0.13",
     "gulp-jshint": "^1.8.6",
     "gulp-myth": "^1.0.1",
     "gulp-rename": "^1.2.0",
-    "nwjs-builder": "1.14.0",
+    "gulp-webserver": "^0.9.1",
+    "minimist": "^1.2.0",
+    "nw-builder": "^3.5.1",
     "require-dir": "^0.1.0",
     "run-sequence": "~1.0.2",
-    "vinyl-source-stream": "^1.0.0"
+    "vinyl-source-stream": "^1.0.0",
+    "wgetpage": "^1.0.5"
   },
-  "dependencies": {
-  }
+  "dependencies": {}
 }

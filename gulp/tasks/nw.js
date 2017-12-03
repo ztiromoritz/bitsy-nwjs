@@ -1,8 +1,5 @@
-
 var gulp       = require('gulp');
 var NWBuilder  = require('nw-builder');
-
-var allPlatforms = ['win', 'osx', 'linux32', 'linux64'];
 
 gulp.task('nw', function(cb) {
 	// Read package.json
@@ -20,22 +17,11 @@ gulp.task('nw', function(cb) {
 			});
 	}
 
-	/*
-	// Which platforms should we build
-	var platforms = allPlatforms.filter(function(platform) {
-		return (process.argv.indexOf('--all') >= 0 || process.argv.indexOf('--' + platform) >= 0);
-	});
-
-	// If no platform where specified, determine current platform
-	if (! platforms.length) { 
-		platforms.push(currentPlatform());
-	}
-	*/
 	var platforms =  ['win64', 'osx64', 'linux32', 'linux64'];
 
 	// Initialize NodeWebkitBuilder
 	var nw = new NWBuilder({
-		files: [ './package.json', './html/**/*' ].concat(modules),
+		files: [ './package.json', './app/**/*' ].concat(modules),
 		version: 'latest',
 		cacheDir: './build/cache',
 		platforms: platforms,
@@ -58,7 +44,7 @@ gulp.task('nw', function(cb) {
 		}
 
 		// Handle ffmpeg for Windows
-		if (platforms.indexOf('win') >= 0) {
+		if (platforms.indexOf('win') > -1) {
 			gulp.src('./deps/ffmpegsumo/win/*')
 				.pipe(gulp.dest(
 					'./build/' + package.name + '/win'
