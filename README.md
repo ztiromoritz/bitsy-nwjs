@@ -30,7 +30,7 @@ To Build packages for win, linux, and max start
 
 
 # Fetch
-To fetch the current state of the software from [http://ledoux.io/](http://ledoux.io/) run:
+To fetch the current version of the software from [http://ledoux.io/](http://ledoux.io/) run:
 ```bash
 npm run fetch
 ```
@@ -45,7 +45,7 @@ If you are on a system where you don't haven npm/node you could try to serve bit
 with some of the command from the [Big list of http static server one-liners](https://gist.github.com/willurd/5720255)
 For example serving it from a raspberry pi, this would be a good option:
 ```bash
-python -m SimpleHTTPServer 8000 
+python -m SimpleHTTPServer 8989 
 ```
 
 # Build older versions:
@@ -54,7 +54,6 @@ List of all tagged versions
 ```
 git tag
 ```
-
 
 # Credits
 The nwjs template based on - [https://github.com/UmbraEngineering/nwjs-template](https://github.com/UmbraEngineering/nwjs-template)

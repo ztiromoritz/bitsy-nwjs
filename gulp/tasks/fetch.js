@@ -4,9 +4,6 @@ var wget = require('wgetpage');
 var download = require('gulp-download-stream');
 
 
-
-
-
 var URL = 'http://ledoux.io/bitsy/';
 var INDEX = 'editor.html';
 var DEST = 'app/';
