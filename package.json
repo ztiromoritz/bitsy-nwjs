@@ -1,0 +1,44 @@
+{
+  "name": "nwjs-bitsy",
+  "version": "0.0.0",
+  "description": "NW.js wrapper for bitsy",
+  "main": "html/editor.html",
+  "window": {
+    "frame": true,
+    "toolbar": true,
+    "width": 1280,
+    "height": 768,
+    "position": "center",
+    "kiosk": false
+  },
+  "scripts": {
+    "app": "./build/nwjs-project/linux32/nwjs-project && echo",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/UmbraEngineering/nwjs-template"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/UmbraEngineering/nwjs-template/issues"
+  },
+  "homepage": "https://github.com/UmbraEngineering/nwjs-template",
+  "devDependencies": {
+    "browserify": "^7.0.2",
+    "del": "~1.1.0",
+    "gulp": "^3.8.10",
+    "gulp-concat": "^2.4.1",
+    "gulp-cssmin": "^0.1.6",
+    "gulp-jshint": "^1.8.6",
+    "gulp-myth": "^1.0.1",
+    "gulp-rename": "^1.2.0",
+    "nwjs-builder": "1.14.0",
+    "require-dir": "^0.1.0",
+    "run-sequence": "~1.0.2",
+    "vinyl-source-stream": "^1.0.0"
+  },
+  "dependencies": {
+  }
+}
