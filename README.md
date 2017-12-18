@@ -1,4 +1,4 @@
-# Bitsy desktop/offline Version
+# Offline wrapper for Bitsy
 Win, Mac and Linux Desktop Versions of the beautiful [Bitsy](https://ledoux.itch.io/bitsy) by [@adamledoux](https://twitter.com/adamledoux)
 (All code under ```/app``` is created by [@adamledoux](https://twitter.com/adamledoux) and just mirrored in this repository 
 from http://ledoux.io/bitsy/editor.html)
