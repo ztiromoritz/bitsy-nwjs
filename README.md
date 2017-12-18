@@ -64,4 +64,5 @@ git tag
 ```
 
 # Credits
-The NW.js template is based on - [https://github.com/UmbraEngineering/nwjs-template](https://github.com/UmbraEngineering/nwjs-template)
+* [Bitsy](https://ledoux.itch.io/bitsy) is created by [@adamledoux](https://twitter.com/adamledoux) 
+* The NW.js template is based on - [https://github.com/UmbraEngineering/nwjs-template](https://github.com/UmbraEngineering/nwjs-template)
