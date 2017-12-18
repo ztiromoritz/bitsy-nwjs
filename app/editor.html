@@ -1,54 +1,78 @@
 <!DOCTYPE HTML>
 <html>
 	<head>
-		<title>bitsy editor</title>
+		<title>Bitsy</title>
+		<link rel="icon" type="image/png" href="image/cat5.png" />
 
 		<!-- STYLES -->
-		<link rel="stylesheet" type="text/css" href="editorStyle.css">
-		<link rel="stylesheet" type="text/css" href="editorButtons.css">
-		<link rel="stylesheet" type="text/css" href="editorColors.css">
-		<link rel="stylesheet" type="text/css" href="editorAnimations.css">
+		<link rel="stylesheet" type="text/css" href="style/editorStyle.css">
+		<link rel="stylesheet" type="text/css" href="style/editorButtons.css">
+		<link rel="stylesheet" type="text/css" href="style/editorColors.css">
+		<link rel="stylesheet" type="text/css" href="style/editorAnimations.css">
+		<link rel="stylesheet" type="text/css" href="style/colorPickerStyle.css">
+
+		<!-- UTIL SCRIPTS -->
+		<script src="script/color_util.js"></script>
 
 		<!-- ENGINE SCRIPTS -->
-		<script src="font.js"></script>
-		<script src="script.js"></script>
-		<script src="dialog.js"></script>
-		<!-- <script src="parser.js"></script> -->
-		<script src="bitsy.js"></script>
+		<script src="script/font.js"></script>
+		<script src="script/script.js"></script>
+		<script src="script/dialog.js"></script>
+		<script src="script/bitsy.js"></script>
 
 		<!-- EDITOR SCRIPTS -->
-		<script src="gif.js"></script>
-		<script src="exporter.js"></script>
-		<script src="editor.js"></script>
+		<script src="script/color_picker.js"></script>
+		<script src="script/gif.js"></script>
+		<script src="script/exporter.js"></script>
+		<script src="script/editor.js"></script>
 
-		<link href="https://fonts.googleapis.com/css?family=Nunito" rel="stylesheet">
-		<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+		<!-- FONTS -->
+		<link href="style/googleNunito.css" rel="stylesheet">
+		<link href="style/googleMaterialIcons.css" rel="stylesheet">
 	</head>
  
 	<body onload="start()">
+
+		<div id="appRoot">
+
 		<div id="topbar">
 
 			<div id="topbarMain" style="width:100%;display:block;overflow:auto;">
 
-				<div class="buttonGroup">
-					<span title="Bitsy ~ make little worlds ~">Bitsy</span>
-					
-					<input title="title text for your game" type="text" id="titleText" onchange="on_change_title();" value="Write your game's title here" placeholder="Title" style="margin-left:10px;">
+				<div id="topbarFlexContainer">
 
-					<input type="checkbox" value="toolsPanel" id="toolsCheck" onclick="toggleToolBar(event);" />
-					<label title="show / hide toolbar" for="toolsCheck" style="font-size:18px;" id="toolsCheckLabel">
-						<i class="material-icons">settings</i>
-						tools
-						<i id="toolsCheckIcon" class="material-icons">expand_less</i>
-					</label>
-				</div>
-				<div class="buttonGroup" style="font-size:12px;float:right;">
-					by <a href="https://www.twitter.com/adamledoux" target="_blank">@adamledoux</a>
+					<div id="logoFlexItem">
+						<span title="Bitsy ~ make little worlds ~" style="font-size:24px">
+							<img src="image/cat.svg" height="24px" width="24px"/>
+							Bitsy
+						</span>	
+					</div>
+
+					<div id="titleFlexItem">
+						<input title="title text for your game" type="text" id="titleText" onchange="on_change_title();" value="Write your game's title here" placeholder="Title" style="width:100%;">
+					</div>
+
+					<div id="toolsCheckFlexItem">
+						<input type="checkbox" value="toolsPanel" id="toolsCheck" onclick="toggleToolBar(event);" />
+						<label title="show / hide toolbar" for="toolsCheck" id="toolsCheckLabel">
+							<i class="material-icons">settings</i>
+							tools
+							<i id="toolsCheckIcon" class="material-icons">expand_less</i>
+						</label>
+					</div>
+
+					<div id="topbarSpaceFlexItem">
+					</div>
+
+					<div id="bylineFlexItem">
+						by <a href="https://www.twitter.com/adamledoux" target="_blank">@adamledoux</a>
+					</div>
+
 				</div>
 
 			</div>
 
-			<div id="toolsPanel" style="width:100%;overflow:auto;display:none;">
+			<div id="toolsPanel">
 
 				<input type="checkbox" value="aboutPanel" id="aboutCheck" onclick="togglePanelAnimated(event);" checked/>
 				<label title="show / hide about window" for="aboutCheck">
@@ -132,7 +156,7 @@
 						</button>
 						<div title="about window" class="panelBarTitle" onmousedown="grabCard(event);">
 							<i class="material-icons">favorite</i>
-							about bitsy v4.3
+							about bitsy v4.5
 						</div>
 					</div>
 					<div id="aboutInner">
@@ -196,11 +220,21 @@
 
 							<input type="checkbox" id="versionNotesCheck" onclick="toggleVersionNotes(event);"/>
 							<label title="show / hide version notes" for="versionNotesCheck">
-								what's new in v4.3
+								what's new in v4.5
 								<i id="versionNotesCheckIcon" class="material-icons">expand_less</i>
 							</label>
 
 							<div id="versionNotes" style="display:none;">
+								<br>
+								v4.5:<br>
+								- new color picker tool<br>
+								- page export color saved between sessions<br>
+								- updated tools bar<br>
+								- bugfix: wall visualization was broken<br>
+								<br>
+								v4.4:<br>
+								- wall settings for tiles apply to all rooms by default<br>
+								- bugfix: error on walking into edge of room<br>
 								<br>
 								v4.3:<br>
 								- new swipe & tap mobile controls<br>
@@ -520,11 +554,6 @@
 							<i id="wallCheckboxIcon" class="material-icons">border_clear</i>
 							wall
 						</label>
-
-						<button title="apply tile's wall setting to all rooms" class="color0" onclick="apply_wall_setting_all_rooms();">
-							for all rooms
-							<i class="material-icons">done_all</i>
-						</button>
 					</div>
 					<div id="dialog" class="controlBox" style="display:none;">
 						<span style="float:left;">
@@ -638,33 +667,44 @@
 							colors
 						</div>
 					</div>
-					
-					<input title="pick background color" type="color" value="#0052cc" id="backgroundColor" onchange="on_change_color_bg();" autocomplete="off"> background <br>
-					
-					<input title="pick tile color" type="color" value="#809fff" id="tileColor" onchange="on_change_color_tile();" autocomplete="off"> tile <br>
-					
-					<input title="pick sprite / avatar color" type="color" value="#ffffff" id="spriteColor" onchange="on_change_color_sprite();" autocomplete="off"> sprite <br>
-					
-					<div id="colorPickerHelp" class="helpMessage" style="display:none;">
-						Having trouble choosing hex colors? <br>
-						Try this online <a href="http://www.w3schools.com/colors/colors_picker.asp" target="_blank">color picker</a>.
+
+					<form id="colorPaletteForm">
+						<input type="radio" name="colorPalette" value="background" id="colorPaletteOptionBackground" onclick="changeColorPickerIndex(0);" checked>
+						<label id="colorPaletteLabelBackground" for="colorPaletteOptionBackground" title="pick background color">
+							<i class="material-icons">grid_on</i> background color
+						</label>
+
+						<input type="radio" name="colorPalette" value="background" id="colorPaletteOptionTile" onclick="changeColorPickerIndex(1);">
+						<label id="colorPaletteLabelTile" for="colorPaletteOptionTile" title="pick tile color">
+							<i class="material-icons">terrain</i> tile color
+						</label>
+
+						<input type="radio" name="colorPalette" value="background" id="colorPaletteOptionSprite" onclick="changeColorPickerIndex(2);">
+						<label id="colorPaletteLabelSprite" for="colorPaletteOptionSprite" title="pick sprite / avatar / item color">
+							<i class="material-icons">nature_people</i> sprite color
+						</label>
+					</form>
+
+					<div id="colorPicker" title="color picker">
+						<canvas id="colorPickerWheel"></canvas>
+						<canvas id="colorPickerSelect" title="color picker wheel"></canvas>
+						<div id="colorPickerSliderBg" title="color picker darkness / lightness slider">
+							<input type="range" id="colorPickerSlider" value="0" />
+						</div>
+						<input id="colorPickerHexText" title="color picker hex code" type="text" />
 					</div>
 
 					<div id="paletteToolsOuter" class="controlBox">
 
 						<input type="checkbox" id="paletteToolsCheck" onclick="togglePaletteTools(event);" />
 						<label title="show / hide additional palette tools" for="paletteToolsCheck">
-							palettes
+							palette select
 							<i id="paletteToolsCheckIcon" class="material-icons">expand_less</i>
 						</label>
 
 						<br>
 						
 						<div id="paletteTools" style="display:none;">
-<!-- 							<div class="buttonGroup" id="paletteIdContainer">
-								palette <span id="paletteId">0</span>
-							</div> -->
-							
 							<span id="paletteNameUI" title="a name to refer to this drawing" class="controlSpan">
 								name
 								<input type="text" id="paletteName" onchange="on_palette_name_change();" style="width:80px;"></input>
@@ -954,6 +994,8 @@
 
 			</div> <!-- Editor Content -->
 		</div> <!-- Editor Window -->
+
+		</div>
 
 	</body>
 </html>
