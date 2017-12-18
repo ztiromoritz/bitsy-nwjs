@@ -1,6 +1,6 @@
 {
   "name": "bitsy",
-  "version": "0.0.1",
+  "version": "4.3.0",
   "description": "NW.js wrapper for bitsy",
   "main": "app/editor.html",
   "window": {
