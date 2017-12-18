@@ -1,6 +1,6 @@
 # Offline wrapper for Bitsy
 
-![Bitsy icon](https://raw.githubusercontent.com/ztiromoritz/bitsy-nwjs/master/custom/icon.png)
+![Bitsy icon](https://raw.githubusercontent.com/ztiromoritz/bitsy-nwjs/master/custom/icon.png =32x32)
 
 Project to create Win, Mac and Linux desktop versions of the beautiful [Bitsy](https://ledoux.itch.io/bitsy) by [@adamledoux](https://twitter.com/adamledoux)
 All code under ```/app``` is created by [@adamledoux](https://twitter.com/adamledoux) and just mirrored in this repository 
