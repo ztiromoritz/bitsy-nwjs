@@ -1,4 +1,3 @@
-
 var gulp     = require('gulp');
 var del      = require('del');
 var package  = require('../../package.json');

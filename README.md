@@ -1,13 +1,11 @@
-# Bitsy Desktop Version
-Win, Mac and Linux Desktop Versions of the beautiful [Bitsy](http://ledoux.io/bitsy/editor.html) by [@adamledoux](https://twitter.com/adamledoux)
+# Bitsy desktop/offline Version
+Win, Mac and Linux Desktop Versions of the beautiful [Bitsy](https://ledoux.itch.io/bitsy) by [@adamledoux](https://twitter.com/adamledoux)
+(All code under ```/app``` is created by [@adamledoux](https://twitter.com/adamledoux) and just mirrored in this repository 
+from http://ledoux.io/bitsy/editor.html)
 
-# Install
-You need npm/node installed. Clone this repository and run:
-```bash
-npm install
-```
+This is just a [NW.js](https://nwjs.io/) wrapper around the original tool.
 
-# Serve
+## Serve
 You can server your local instance of bitsy by using: 
 ```bash
 npm run serve 
@@ -24,12 +22,30 @@ npm run serve -- --livereload
 ```
 This will start the same local server but with hot reload. 
 
-# Build 
-To Build packages for win, linux, and max start
+### Without node and NW.js
+If you are on a system where you don't haven npm/node you could try to serve bitsy locally
+with some of the command from the [Big list of http static server one-liners](https://gist.github.com/willurd/5720255)
+For example serving it from a raspberry pi, this would be a good option:
+```bash
+cd app
+python -m SimpleHTTPServer 8989 
+```
 
+## Create desktop versions
+### Install
+You need npm/node installed. Clone this repository and run:
+```bash
+npm install
+```
 
+### Build 
+To Build packages for win, linux, and mac start
+```bash
+npm run build
+```
+This will create packages in ```build/bitsy```.
 
-# Fetch
+### Fetch
 To fetch the current version of the software from [http://ledoux.io/](http://ledoux.io/) run:
 ```bash
 npm run fetch
@@ -40,15 +56,7 @@ To see the differences:
 git diff app/
 ```
 
-# Without node & nwjs
-If you are on a system where you don't haven npm/node you could try to serve bitsy locally
-with some of the command from the [Big list of http static server one-liners](https://gist.github.com/willurd/5720255)
-For example serving it from a raspberry pi, this would be a good option:
-```bash
-python -m SimpleHTTPServer 8989 
-```
-
-# Build older versions:
+## Build older versions:
 This project was started with version 4.3 of bitsy. (Version 4.3.0 of this project).
 List of all tagged versions
 ```
@@ -56,4 +64,4 @@ git tag
 ```
 
 # Credits
-The nwjs template based on - [https://github.com/UmbraEngineering/nwjs-template](https://github.com/UmbraEngineering/nwjs-template)
+The NW.js template is based on - [https://github.com/UmbraEngineering/nwjs-template](https://github.com/UmbraEngineering/nwjs-template)

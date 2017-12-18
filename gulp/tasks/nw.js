@@ -1,6 +1,8 @@
 var gulp       = require('gulp');
 var NWBuilder  = require('nw-builder');
 
+var platforms =  ['win64', 'osx64', 'linux32', 'linux64'];
+
 gulp.task('nw', function(cb) {
 	// Read package.json
 	var package = require('../../package.json');
@@ -17,16 +19,14 @@ gulp.task('nw', function(cb) {
 			});
 	}
 
-	var platforms =  ['win64', 'osx64', 'linux32', 'linux64'];
+
 
 	// Initialize NodeWebkitBuilder
 	var nw = new NWBuilder({
-		files: [ './package.json', './app/**/*' ].concat(modules),
+		files: [ './package.json', './app/**/*', './custom/**/*' ].concat(modules),
 		version: 'latest',
 		cacheDir: './build/cache',
 		platforms: platforms,
-		// macIcns: './app/assets/icons/mac.icns',
-		// winIco: './app/assets/icons/windows.ico',
 		checkVersions: false
 	});
 
@@ -42,39 +42,6 @@ gulp.task('nw', function(cb) {
 		if (err) {
 			return console.error(err)
 		}
-
-		// Handle ffmpeg for Windows
-		if (platforms.indexOf('win') > -1) {
-			gulp.src('./deps/ffmpegsumo/win/*')
-				.pipe(gulp.dest(
-					'./build/' + package.name + '/win'
-				));
-		}
-
-		// Handle ffmpeg for Mac
-		if (platforms.indexOf('osx') > -1) {
-			gulp.src('./deps/ffmpegsumo/osx/*')
-				.pipe(gulp.dest(
-					'./build/' + package.name + '/osx/node-webkit.app/Contents/Frameworks/node-webkit Framework.framework/Libraries'
-				));
-		}
-
-		// Handle ffmpeg for Linux32
-		if (platforms.indexOf('linux32') > -1) {
-			gulp.src('./deps/ffmpegsumo/linux32/*')
-				.pipe(gulp.dest(
-					'./build/' + package.name + '/linux32'
-				));
-		}
-
-		// Handle ffmpeg for Linux64
-		if (platforms.indexOf('linux64') > -1) {
-			gulp.src('./deps/ffmpegsumo/linux64/*')
-				.pipe(gulp.dest(
-					'./build/' + package.name + '/linux64'
-				));
-		}
-
 		cb(err);
 	});
 });

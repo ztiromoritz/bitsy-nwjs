@@ -1,6 +1,7 @@
 {
   "name": "bitsy",
-  "version": "4.3.0",
+  "version": "0.0.1",
+  "_comment_version": "4.3.0",
   "description": "NW.js wrapper for bitsy",
   "main": "app/editor.html",
   "window": {
@@ -9,7 +10,8 @@
     "width": 1280,
     "height": 768,
     "position": "center",
-    "kiosk": false
+    "kiosk": false,
+    "icon": "custom/icon.png"
   },
   "scripts": {
     "build": "gulp build",
@@ -18,26 +20,26 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/UmbraEngineering/nwjs-template"
+    "url": ""
   },
   "author": "",
   "license": "",
   "homepage": "",
   "devDependencies": {
     "browserify": "^7.0.2",
-    "del": "~1.1.0",
+    "del": "^1.1.0",
     "gulp": "^3.8.10",
     "gulp-concat": "^2.4.1",
     "gulp-cssmin": "^0.1.6",
-    "gulp-download-stream": "0.0.13",
+    "gulp-download-stream": "^0.0.13",
     "gulp-jshint": "^1.8.6",
     "gulp-myth": "^1.0.1",
     "gulp-rename": "^1.2.0",
     "gulp-webserver": "^0.9.1",
     "minimist": "^1.2.0",
     "nw-builder": "^3.5.1",
-    "require-dir": "^0.1.0",
-    "run-sequence": "~1.0.2",
+    "require-dir": "^0.3.2",
+    "run-sequence": "^1.0.2",
     "vinyl-source-stream": "^1.0.0",
     "wgetpage": "^1.0.5"
   },
