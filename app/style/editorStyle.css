@@ -249,9 +249,11 @@ input {
 	/*width:224px;*/
 	margin:0px;
 }
-/*#paintExplorerContent label {
-	border: none;
-}*/
+
+#paintExplorerContent div {
+	display: inline-block;
+}
+
 #paintExplorerContent img {
 	width:64px;
 	height:64px;
@@ -262,6 +264,16 @@ input {
 	image-rendering: pixelated;
 	border: solid 4px white;
 	/*border: none;*/
+}
+
+#paintExplorerContent figcaption {
+	text-align: center;
+	padding-top: 5px;
+	min-height: 20px;
+	max-width: 68px;
+	/*background: red;*/
+	overflow: hidden;
+	white-space: nowrap;
 }
 
 #paintExplorerAdd {
@@ -525,4 +537,25 @@ input {
 #bylineFlexItem {
 	flex: 1 0 auto;
 	font-size:12px;
+}
+
+#paintExplorerFilter {
+	margin-top: 5px;
+	padding: 5px;
+}
+
+#paintExplorerFilterIcon {
+	float:left;
+}
+#paintExplorerFilterIcon .material-icons {
+	font-size: 18px;
+}
+
+#paintExplorerFilterInput {
+	width: 220px;
+	display: block;
+}
+
+.thumbnailDefaultName {
+	color : #ccccff;
 }
