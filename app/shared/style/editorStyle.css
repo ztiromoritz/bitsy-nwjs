@@ -1,14 +1,29 @@
+html {
+	height: 100%;
+}
+
 body {
 	margin: 0 !important;
 	padding: 0 !important;
 	line-height: 170%;
 	font-family: "Nunito", Helvetica, Arial, sans-serif;
 	font-size: 16px;
+
+	height: 100%;
 }
 canvas {
 	background: black;
 	margin-top: 4px;
 }
+
+#appRoot {
+	display: flex;
+	flex-flow: column;
+	height: 100%;
+
+	/*border: solid 2px red;*/
+}
+
 #topbar {
 	width: 100%;
 	background: white;
@@ -17,12 +32,26 @@ canvas {
 	padding-right: 20px;
 	box-sizing: border-box;
 	font-size: 20px;
+
+	flex: 0 1 auto;
 }
+
+#topbarMain {
+	width: 100%;
+
+	/*border: solid 2px red;*/
+}
+
 #editorWindow {
 	width:100%;
-	height:750px;
+	/*height:750px;*/
+
 	overflow:scroll;
 	box-sizing: border-box;
+
+	flex: 1 1 auto;
+
+	/*border: solid 2px red;*/
 }
 #editorContent {
 	height:100%;
@@ -69,9 +98,11 @@ textarea {
 input {
 	font-family: monospace;
 }
-#unsupportedFeatures {
+
+.warning {
 	padding: 10px;
 }
+
 .helpMessage {
 	padding: 5px;
 	margin: 2px;
@@ -165,6 +196,11 @@ input {
 #toolsPanel {
 	padding-top: 5px;
 	font-size: 14px;
+	width:100%;
+	overflow:auto;
+	display:none;
+	flex-flow: row;
+	flex-wrap: wrap;
 }
 
 .panelBarTitle {
@@ -215,9 +251,11 @@ input {
 	/*width:224px;*/
 	margin:0px;
 }
-/*#paintExplorerContent label {
-	border: none;
-}*/
+
+#paintExplorerContent div {
+	display: inline-block;
+}
+
 #paintExplorerContent img {
 	width:64px;
 	height:64px;
@@ -228,6 +266,16 @@ input {
 	image-rendering: pixelated;
 	border: solid 4px white;
 	/*border: none;*/
+}
+
+#paintExplorerContent figcaption {
+	text-align: center;
+	padding-top: 5px;
+	min-height: 20px;
+	max-width: 68px;
+	/*background: red;*/
+	overflow: hidden;
+	white-space: nowrap;
 }
 
 #paintExplorerAdd {
@@ -290,7 +338,6 @@ input {
 }
 
 #paintEditMain {
-	width:256px;
 	white-space:initial;
 	padding:none;
 	margin:none;
@@ -462,4 +509,62 @@ input {
 #dialogEditorNoContent {
 	width: 355px;
 	height: 580px;
+}
+
+/* NEW FLEX STUFF */
+#topbarFlexContainer {
+	width:100%;
+	display:flex;
+	flex-flow: row;
+	overflow: hidden;
+}
+
+#logoFlexItem {
+	flex: 1 0 auto; white-space: nowrap; overflow: hidden;
+}
+
+#titleFlexItem {
+	flex: 1 100%; padding-left: 10px; padding-right: 20px;
+}
+
+#toolsCheckFlexItem {
+	flex: 1 0 auto;
+}
+
+#topbarSpaceFlexItem {
+	flex: 1 1 400px;
+}
+
+#bylineFlexItem {
+	flex: 1 0 auto;
+	font-size:12px;
+}
+
+#bitsyLogoTitle {
+	font-size: 24px;
+}
+
+#paintExplorerFilter {
+	margin-top: 5px;
+	padding: 5px;
+}
+
+#paintExplorerFilterIcon {
+	float:left;
+}
+#paintExplorerFilterIcon .material-icons {
+	font-size: 18px;
+}
+
+#paintExplorerFilterInput {
+	width: 220px;
+	display: block;
+}
+
+.thumbnailDefaultName {
+	color : #ccccff;
+}
+
+#aboutPanel {
+	width:350px;white-space:normal;
 }

@@ -9,6 +9,8 @@ this.CreateBuffer = function() {
 };
 
 var DialogRenderer = function() {
+
+	// TODO : refactor this eventually? remove everything from struct.. avoid the defaults?
 	var textboxInfo = {
 		img : null,
 		width : 104,
@@ -16,9 +18,30 @@ var DialogRenderer = function() {
 		top : 12,
 		left : 12,
 		bottom : 12, //for drawing it from the bottom
+		font_scale : 0.5, // we draw font at half-size compared to everything else
+		padding_vert : 2,
+		padding_horz : 4,
+		arrow_height : 5,
 	};
-	
-	var font = new Font();
+
+	var font = null;
+	this.SetFont = function(f) {
+		font = f;
+		textboxInfo.height = (textboxInfo.padding_vert * 3) + (relativeFontHeight() * 2) + textboxInfo.arrow_height;
+		textboxInfo.img = context.createImageData(textboxInfo.width*scale, textboxInfo.height*scale);
+	}
+
+	function textScale() {
+		return scale * textboxInfo.font_scale;
+	}
+
+	function relativeFontWidth() {
+		return Math.ceil( font.getWidth() * textboxInfo.font_scale );
+	}
+
+	function relativeFontHeight() {
+		return Math.ceil( font.getHeight() * textboxInfo.font_scale );
+	}
 
 	var context = null;
 	this.AttachContext = function(c) {
@@ -27,7 +50,19 @@ var DialogRenderer = function() {
 
 	this.ClearTextbox = function() {
 		if(context == null) return;
-		textboxInfo.img = context.createImageData(textboxInfo.width*scale, textboxInfo.height*scale);
+
+		//create new image none exists
+		if(textboxInfo.img == null)
+			textboxInfo.img = context.createImageData(textboxInfo.width*scale, textboxInfo.height*scale);
+
+		// fill text box with black
+		for (var i=0;i<textboxInfo.img.data.length;i+=4)
+		{
+			textboxInfo.img.data[i+0]=0;
+			textboxInfo.img.data[i+1]=0;
+			textboxInfo.img.data[i+2]=0;
+			textboxInfo.img.data[i+3]=255;
+		}
 	};
 
 	var isCentered = false;
@@ -79,16 +114,23 @@ var DialogRenderer = function() {
 	};
 
 	var text_scale = 2; //using a different scaling factor for text feels like cheating... but it looks better
-	this.DrawChar = function(char, row, col) {
+	this.DrawChar = function(char, row, col, leftPos) {
 		char.offset = {x:0, y:0};
+
 		char.SetPosition(row,col);
 		char.ApplyEffects(effectTime);
-		var charData = font.getChar( char.char );
-		var top = (4 * scale) + (row * 2 * scale) + (row * 8 * text_scale) + Math.floor( char.offset.y );
-		var left = (4 * scale) + (col * 6 * text_scale) + Math.floor( char.offset.x );
-		for (var y = 0; y < 8; y++) {
-			for (var x = 0; x < 6; x++) {
-				var i = (y * 6) + x;
+
+		var charData = char.bitmap;
+
+		var top = (4 * scale) + (row * 2 * scale) + (row * font.getHeight() * text_scale) + Math.floor( char.offset.y );
+		var left = (4 * scale) + (leftPos * text_scale) + Math.floor( char.offset.x );
+
+		var debug_r = Math.random() * 255;
+
+		for (var y = 0; y < char.height; y++) {
+			for (var x = 0; x < char.width; x++) {
+
+				var i = (y * char.width) + x;
 				if ( charData[i] == 1 ) {
 
 					//scaling nonsense
@@ -101,9 +143,22 @@ var DialogRenderer = function() {
 							textboxInfo.img.data[pxl+3] = char.color.a;
 						}
 					}
-
-					
 				}
+				// else {
+				// 	// DEBUG
+
+				// 	//scaling nonsense
+				// 	for (var sy = 0; sy < text_scale; sy++) {
+				// 		for (var sx = 0; sx < text_scale; sx++) {
+				// 			var pxl = 4 * ( ((top+(y*text_scale)+sy) * (textboxInfo.width*scale)) + (left+(x*text_scale)+sx) );
+				// 			textboxInfo.img.data[pxl+0] = debug_r;
+				// 			textboxInfo.img.data[pxl+1] = 0;
+				// 			textboxInfo.img.data[pxl+2] = 0;
+				// 			textboxInfo.img.data[pxl+3] = 255;
+				// 		}
+				// 	}
+				// }
+
 			}
 		}
 		
@@ -112,7 +167,7 @@ var DialogRenderer = function() {
 	};
 
 	var effectTime = 0; // TODO this variable should live somewhere better
-	this.Draw = function(buffer,dt) { // TODO move out of the buffer?? (into say a dialog box renderer)
+	this.Draw = function(buffer,dt) {
 		effectTime += dt;
 
 		this.ClearTextbox();
@@ -138,6 +193,10 @@ var DialogRenderer = function() {
 		effectTime = 0;
 		// TODO - anything else?
 	}
+
+	// this.CharsPerRow = function() {
+	// 	return textboxInfo.charsPerRow;
+	// }
 }
 
 
@@ -150,7 +209,12 @@ var DialogBuffer = function() {
 	var nextCharMaxTime = 50; // in milliseconds
 	var isDialogReadyToContinue = false;
 	var activeTextEffects = [];
-	
+	var font = null;
+
+	this.SetFont = function(f) {
+		font = f;
+	}
+
 	this.CurPage = function() { return buffer[ pageIndex ]; };
 	this.CurRow = function() { return this.CurPage()[ rowIndex ]; };
 	this.CurChar = function() { return this.CurRow()[ charIndex ]; };
@@ -164,10 +228,17 @@ var DialogBuffer = function() {
 			var row = this.CurPage()[i];
 			var charCount = (i == rowIndex) ? charIndex+1 : row.length;
 			// console.log(charCount);
+
+			var leftPos = 0;
+
 			for(var j = 0; j < charCount; j++) {
 				var char = row[j];
-				if(char)
-					handler( char, i /*rowIndex*/, j /*colIndex*/ );
+				if(char) {
+					// handler( char, i /*rowIndex*/, j /*colIndex*/ );
+					handler(char, i /*rowIndex*/, j /*colIndex*/, leftPos)
+
+					leftPos += char.width;
+				}
 			}
 		}
 	}
@@ -277,22 +348,27 @@ var DialogBuffer = function() {
 
 	this.CanContinue = function() { return isDialogReadyToContinue; };
 
-	function DialogChar(char,effectList) {
-		this.char = char;
+	function DialogChar(effectList) {
 		this.effectList = effectList.slice(); // clone effect list (since it can change between chars)
 
 		this.color = { r:255, g:255, b:255, a:255 };
 		this.offset = { x:0, y:0 }; // in pixels (screen pixels?)
-		this.row = 0;
+
 		this.col = 0;
+		this.row = 0;
+
 		this.SetPosition = function(row,col) {
+			// console.log("SET POS");
+			// console.log(this);
 			this.row = row;
 			this.col = col;
-		};
+		}
 
 		this.ApplyEffects = function(time) {
+			// console.log("APPLY EFFECTS! " + time);
 			for(var i = 0; i < this.effectList.length; i++) {
 				var effectName = this.effectList[i];
+				// console.log("FX " + effectName);
 				TextEffects[ effectName ].DoEffect( this, time );
 			}
 		}
@@ -308,18 +384,104 @@ var DialogBuffer = function() {
 				printHandler = null; // only call handler once (hacky)
 			}
 		}
-	};
+
+		this.bitmap = [];
+		this.width = 0;
+		this.height = 0;
+	}
+
+	function DialogFontChar(font, char, effectList) {
+		Object.assign(this, new DialogChar(effectList));
+
+		this.bitmap = font.getChar(char);
+		this.width = font.getWidth();
+		this.height = font.getHeight();
+	}
+
+	function DialogDrawingChar(drawingId, effectList) {
+		Object.assign(this, new DialogChar(effectList));
+
+		var imageData = renderer.GetImageSource(drawingId)[0];
+		var imageDataFlat = [];
+		for (var i = 0; i < imageData.length; i++) {
+			// console.log(imageData[i]);
+			imageDataFlat = imageDataFlat.concat(imageData[i]);
+		}
+
+		this.bitmap = imageDataFlat;
+		this.width = 8;
+		this.height = 8;
+	}
 
 	function AddWordToCharArray(charArray,word,effectList) {
 		for(var i = 0; i < word.length; i++) {
-			charArray.push( new DialogChar( word[i], effectList ) );
+			charArray.push( new DialogFontChar( font, word[i], effectList ) );
 		}
 		return charArray;
 	}
 
-	var charsPerRow = 32;
+	function GetCharArrayWidth(charArray) {
+		var width = 0;
+		for(var i = 0; i < charArray.length; i++) {
+			width += charArray[i].width;
+		}
+		return width;
+	}
+
+	function GetStringWidth(str) {
+		var width = 0;
+		for (var i = 0; i < str.length; i++) {
+			width += font.getWidth();
+		}
+		return width;
+	}
+
+	var pixelsPerRow = 192; // hard-coded fun times!!!
+
+	this.AddDrawing = function(drawingId, onFinishHandler) {
+		// console.log("DRAWING ID " + drawingId);
+
+		var curPageIndex = buffer.length - 1;
+		var curRowIndex = buffer[curPageIndex].length - 1;
+		var curRowArr = buffer[curPageIndex][curRowIndex];
+
+		var drawingChar = new DialogDrawingChar(drawingId, activeTextEffects)
+		drawingChar.SetPrintHandler( onFinishHandler );
+
+		var rowLength = GetCharArrayWidth(curRowArr);
+
+		// TODO : clean up copy-pasted code here :/
+		if (rowLength + drawingChar.width  <= pixelsPerRow || rowLength <= 0)
+		{
+			//stay on same row
+			curRowArr.push( drawingChar );
+		}
+		else if (curRowIndex == 0)
+		{
+			//start next row
+			buffer[ curPageIndex ][ curRowIndex ] = curRowArr;
+			buffer[ curPageIndex ].push( [] );
+			curRowIndex++;
+			curRowArr = buffer[ curPageIndex ][ curRowIndex ];
+			curRowArr.push( drawingChar );
+		}
+		else {
+			//start next page
+			buffer[ curPageIndex ][ curRowIndex ] = curRowArr;
+			buffer.push( [] );
+			curPageIndex++;
+			buffer[ curPageIndex ].push( [] );
+			curRowIndex = 0;
+			curRowArr = buffer[ curPageIndex ][ curRowIndex ];
+			curRowArr.push( drawingChar );
+		}
+
+		isActive = true; // this feels like a bad way to do this???
+	}
+
+	// TODO : convert this into something that takes DialogChar arrays
 	this.AddText = function(textStr,onFinishHandler) {
-		console.log("ADD TEXT " + textStr);
+		// console.log("ADD TEXT " + textStr);
 
 		//process dialog so it's easier to display
 		var words = textStr.split(" ");
@@ -334,10 +496,14 @@ var DialogBuffer = function() {
 
 		for (var i = 0; i < words.length; i++) {
 			var word = words[i];
-			var wordLength = word.length + ((i == 0) ? 0 : 1);
-			if (curRowArr.length + wordLength <= charsPerRow || curRowArr.length <= 0) {
+
+			var wordWithPrecedingSpace = ((i == 0) ? "" : " ") + word;
+			var wordLength = GetStringWidth( wordWithPrecedingSpace );
+
+			var rowLength = GetCharArrayWidth(curRowArr);
+
+			if (rowLength + wordLength <= pixelsPerRow || rowLength <= 0) {
 				//stay on same row
-				var wordWithPrecedingSpace = ((i == 0) ? "" : " ") + word;
 				curRowArr = AddWordToCharArray( curRowArr, wordWithPrecedingSpace, activeTextEffects );
 			}
 			else if (curRowIndex == 0) {
@@ -414,6 +580,8 @@ var DialogBuffer = function() {
 
 	var didFlipPageThisFrame = false;
 	this.DidFlipPageThisFrame = function(){ return didFlipPageThisFrame; };
+
+	// this.SetCharsPerRow = function(num){ charsPerRow = num; }; // hacky
 };
 
 /* NEW TEXT EFFECTS */
@@ -421,6 +589,11 @@ var TextEffects = new Map();
 
 var RainbowEffect = function() { // TODO - should it be an object or just a method?
 	this.DoEffect = function(char,time) {
+		// console.log("RAINBOW!!!");
+		// console.log(char);
+		// console.log(char.color);
+		// console.log(char.col);
+
 		var h = Math.abs( Math.sin( (time / 600) - (char.col / 8) ) );
 		var rgb = hslToRgb( h, 1, 0.5 );
 		char.color.r = rgb[0];
@@ -435,7 +608,7 @@ var ColorEffect = function(index) {
 	this.DoEffect = function(char) {
 		var pal = getPal( curPal() );
 		var color = pal[ parseInt( index ) ];
-		console.log(color);
+		// console.log(color);
 		char.color.r = color[0];
 		char.color.g = color[1];
 		char.color.b = color[2];
@@ -470,43 +643,5 @@ var ShakyEffect = function() {
 	}
 };
 TextEffects["shk"] = new ShakyEffect();
-
-// source : https://gist.github.com/mjackson/5311256
-/**
- * Converts an HSL color value to RGB. Conversion formula
- * adapted from http://en.wikipedia.org/wiki/HSL_color_space.
- * Assumes h, s, and l are contained in the set [0, 1] and
- * returns r, g, and b in the set [0, 255].
- *
- * @param   Number  h       The hue
- * @param   Number  s       The saturation
- * @param   Number  l       The lightness
- * @return  Array           The RGB representation
- */
-function hslToRgb(h, s, l) {
-  var r, g, b;
-
-  if (s == 0) {
-    r = g = b = l; // achromatic
-  } else {
-    function hue2rgb(p, q, t) {
-      if (t < 0) t += 1;
-      if (t > 1) t -= 1;
-      if (t < 1/6) return p + (q - p) * 6 * t;
-      if (t < 1/2) return q;
-      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-      return p;
-    }
-
-    var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-    var p = 2 * l - q;
-
-    r = hue2rgb(p, q, h + 1/3);
-    g = hue2rgb(p, q, h);
-    b = hue2rgb(p, q, h - 1/3);
-  }
-
-  return [ r * 255, g * 255, b * 255 ];
-}
 
 } // Dialog()

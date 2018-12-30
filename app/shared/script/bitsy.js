@@ -1,6 +1,6 @@
-var xhr;
+var xhr; // TODO : remove
 var canvas;
-var context;
+var context; // TODO : remove if safe?
 var ctx;
 
 var title = "";
@@ -15,6 +15,9 @@ var palette = {
 var ending = {};
 var variable = {}; // these are starting variable values -- they don't update (or I don't think they will)
 var playerId = "A";
+
+var defaultFontName = "ascii_small";
+var fontName = defaultFontName;
 
 var names = {
 	room : new Map(),
@@ -47,18 +50,12 @@ function updateNamesFromCurData() {
 	}
 }
 
-//stores all image data for tiles, sprites, drawings
-var imageStore = {
-	source: {},
-	render: {}
-};
-
 var spriteStartLocations = {};
 
 /* VERSION */
 var version = {
-	major: 4, // for file format / engine changes
-	minor: 5 // for editor changes and bugfixes
+	major: 5, // for file format / engine changes
+	minor: 3 // for editor changes and bugfixes
 };
 function getEngineVersion() {
 	return version.major + "." + version.minor;
@@ -90,11 +87,7 @@ function clearGameData() {
 	isEnding = false; //todo - correct place for this?
 	variable = {};
 
-	//stores all image data for tiles, sprites, drawings
-	imageStore = {
-		source: {},
-		render: {}
-	};
+	// TODO RENDERER : clear data?
 
 	spriteStartLocations = {};
 
@@ -104,6 +97,8 @@ function clearGameData() {
 		sprite : new Map(),
 		item : new Map()
 	};
+
+	fontName = defaultFontName; // TODO : reset font manager too?
 }
 
 var width = 128;
@@ -125,7 +120,11 @@ var key = {
 	a : 65,
 	s : 83,
 	d : 68,
-	r : 82
+	r : 82,
+	shift : 16,
+	ctrl : 17,
+	alt : 18,
+	cmd : 224
 };
 
 var prevTime = 0;
@@ -143,6 +142,8 @@ var onVariableChanged = null;
 
 var isPlayerEmbeddedInEditor = false;
 
+var renderer = new Renderer(tilesize, scale);
+
 function getGameNameFromURL() {
 	var game = window.location.hash.substring(1);
 	// console.log("game name --- " + game);
@@ -155,20 +156,32 @@ function attachCanvas(c) {
 	canvas.height = width * scale;
 	ctx = canvas.getContext("2d");
 	dialogRenderer.AttachContext(ctx);
+	renderer.AttachContext(ctx);
 }
 
 var curGameData = null;
 function load_game(game_data, startWithTitle) {
 	curGameData = game_data; //remember the current game (used to reset the game)
+
 	dialogBuffer.Reset();
 	scriptInterpreter.ResetEnvironment(); // ensures variables are reset -- is this the best way?
-	// console.log(dialog);
+
 	parseWorld(game_data);
-	// console.log(dialog);
+
+	if (!isPlayerEmbeddedInEditor) {
+		// hack to ensure default font is available
+		fontManager.AddResource(defaultFontName + fontManager.GetExtension(), document.getElementById(defaultFontName).text.slice(1));
+	}
+
+	var font = fontManager.Get( fontName );
+	dialogBuffer.SetFont(font);
+	dialogRenderer.SetFont(font);
+
 	setInitialVariables();
-	renderImages();
+
+	// setInterval(updateLoadingScreen, 300); // hack test
+
 	onready(startWithTitle);
-	// console.log(dialog);
 }
 
 function reset_cur_game() {
@@ -184,12 +197,23 @@ function onready(startWithTitle) {
 
 	clearInterval(loading_interval);
 
-	document.addEventListener('keydown', onkeydown);
-	document.addEventListener('keyup', onkeyup);
+	input = new InputManager();
 
-	canvas.addEventListener('touchstart', ontouchstart);
-	canvas.addEventListener('touchmove', ontouchmove);
-	canvas.addEventListener('touchend', ontouchend);
+	document.addEventListener('keydown', input.onkeydown);
+	document.addEventListener('keyup', input.onkeyup);
+
+	if (isPlayerEmbeddedInEditor) {
+		canvas.addEventListener('touchstart', input.ontouchstart);
+		canvas.addEventListener('touchmove', input.ontouchmove);
+		canvas.addEventListener('touchend', input.ontouchend);
+	}
+	else {
+		document.addEventListener('touchstart', input.ontouchstart);
+		document.addEventListener('touchmove', input.ontouchmove);
+		document.addEventListener('touchend', input.ontouchend);
+	}
+
+	window.onblur = input.onblur;
 
 	update_interval = setInterval(update,-1);
 
@@ -214,98 +238,6 @@ function setInitialVariables() {
 	}
 	scriptInterpreter.SetOnVariableChangeHandler( onVariableChanged );
 }
-
-// OLD VERSION: DEPRECATED
-// function onTouch(e) {
-// 	console.log("MOUSEDOWN");
-
-// 	//dialog mode
-// 	// if (isDialogMode) {
-// 	if(dialogBuffer.IsActive()) {
-
-// 		if (dialogBuffer.CanContinue()) {
-// 			var hasMoreDialog = dialogBuffer.Continue();
-// 			if(!hasMoreDialog) {
-// 				onExitDialog();
-// 			}
-// 		}
-// 		else {
-// 			dialogBuffer.Skip();
-// 		}
-
-// 		return;
-// 	}
-
-// 	if (isEnding) {
-// 		reset_cur_game();
-// 		return;
-// 	}
-
-// 	//walking mode
-// 	var off = getOffset(e);
-// 	var x = Math.floor(off.x / (tilesize*scale));
-// 	var y = Math.floor(off.y / (tilesize*scale));
-	
-// 	//abort if you touch the square you're already on
-// 	if (player().x == x && player().y == y) {
-// 		return;
-// 	}
-
-// 	//did we touch a sprite?
-// 	var touchedSprite = null;
-// 	for (id in sprite) {
-// 		var spr = sprite[id];
-// 		if (spr.room === curRoom) {
-// 			if (spr.x == x && spr.y == y) {
-// 				touchedSprite = id;
-// 			}
-// 		}
-// 	}
-
-// 	//respond to sprite touch
-// 	if (touchedSprite) {
-// 		var spr = sprite[touchedSprite];
-// 		// console.log(Math.abs(player().x - spr.x));
-// 		// console.log(Math.abs(player().y - spr.y));
-// 		if ( Math.abs(player().x - spr.x) == 0
-// 				&& Math.abs(player().y - spr.y) == 1 )
-// 		{
-// 			//touched a sprite next to you
-// 		}
-// 		else if ( Math.abs(player().y - spr.y) == 0
-// 				&& Math.abs(player().x - spr.x) == 1 )
-// 		{
-// 			//touched a sprite next to you
-// 		}
-// 		else
-// 		{
-// 			return; //oh no! touched a sprite that's out of range
-// 		}
-
-// 		startSpriteDialog( touchedSprite /*spriteId*/ );
-
-// 		return;
-// 	}
-
-// 	//did we touch an open square?
-// 	var row = room[curRoom].tilemap[y];
-// 	// console.log(row);
-// 	var til = row[x];
-// 	// console.log(til);
-// 	if ( room[curRoom].walls.indexOf(til) != -1 ) {
-// 		//touched a wall
-// 		return;
-// 	}
-
-// 	//find path to open square, if there is one
-// 	var map = collisionMap(curRoom);
-// 	var path = breadthFirstSearch( map, {x:player().x, y:player().y}, {x:x,y:y} );
-// 	path = path.slice(1); //remove player's start square
-
-// 	//console.log( pathToString(path) );
-
-// 	player().walkingPath = path;
-// }
 
 // TODO: this is likely broken
 function breadthFirstSearch(map, from, to) {
@@ -431,7 +363,22 @@ function getOffset(evt) {
 function stopGame() {
 	console.log("stop GAME!");
 
-	document.removeEventListener('keydown', onkeydown);
+	document.removeEventListener('keydown', input.onkeydown);
+	document.removeEventListener('keyup', input.onkeyup);
+
+	if (isPlayerEmbeddedInEditor) {
+		canvas.removeEventListener('touchstart', input.ontouchstart);
+		canvas.removeEventListener('touchmove', input.ontouchmove);
+		canvas.removeEventListener('touchend', input.ontouchend);
+	}
+	else {
+		document.removeEventListener('touchstart', input.ontouchstart);
+		document.removeEventListener('touchmove', input.ontouchmove);
+		document.removeEventListener('touchend', input.ontouchend);
+	}
+
+	window.onblur = null;
+
 	clearInterval(update_interval);
 }
 
@@ -520,17 +467,29 @@ function loadingAnimation() {
 	if (loading_anim_frame >= 5) loading_anim_frame = 0;
 }
 
+function updateLoadingScreen() {
+	// TODO : in progress
+	ctx.fillStyle = "rgb(0,0,0)";
+	ctx.fillRect(0,0,canvas.width,canvas.height);
+
+	loadingAnimation();
+	drawSprite( getSpriteImage(sprite["a"],"0",0), 8, 8, ctx );
+}
+
 function update() {
 	var curTime = Date.now();
 	deltaTime = curTime - prevTime;
 
-	//clear screen
-	ctx.fillStyle = "rgb(" + getPal(curPal())[0][0] + "," + getPal(curPal())[0][1] + "," + getPal(curPal())[0][2] + ")";
-	ctx.fillRect(0,0,canvas.width,canvas.height);
-	
+	updateInput();
+
 	if (!isNarrating && !isEnding) {
 		updateAnimation();
 		drawRoom( room[curRoom] ); // draw world if game has begun
+	}
+	else {
+		//make sure to still clear screen
+		ctx.fillStyle = "rgb(" + getPal(curPal())[0][0] + "," + getPal(curPal())[0][1] + "," + getPal(curPal())[0][2] + ")";
+		ctx.fillRect(0,0,canvas.width,canvas.height);
 	}
 
 	// if (isDialogMode) { // dialog mode
@@ -540,14 +499,6 @@ function update() {
 	}
 	else if (!isEnding) {
 		moveSprites();
-
-		if (player().walkingPath.length > 0) {
-			var dest = player().walkingPath[ player().walkingPath.length - 1 ];
-			ctx.fillStyle = "#fff";
-			ctx.globalAlpha = 0.5;
-			ctx.fillRect( dest.x * tilesize*scale, dest.y * tilesize*scale, tilesize*scale, tilesize*scale );
-			ctx.globalAlpha = 1;
-		}
 	}
 
 	// keep moving avatar if player holds down button
@@ -574,6 +525,60 @@ function update() {
 	/* hacky replacement */
 	if (onDialogUpdate != null)
 		dialogRenderer.SetPageFinishHandler( onDialogUpdate );
+
+	input.resetKeyPressed();
+	input.resetTapReleased();
+}
+
+function updateInput() {
+	if( dialogBuffer.IsActive() ) {
+		if (input.anyKeyPressed() || input.isTapReleased()) {
+			/* CONTINUE DIALOG */
+			if (dialogBuffer.CanContinue()) {
+				var hasMoreDialog = dialogBuffer.Continue();
+				if(!hasMoreDialog) {
+					// ignore currently held keys UNTIL they are released (stops player from insta-moving)
+					input.ignoreHeldKeys();
+
+					onExitDialog();
+				}
+			}
+			else {
+				dialogBuffer.Skip();
+			}
+		}
+	}
+	else if ( isEnding ) {
+		if (input.anyKeyPressed() || input.isTapReleased()) {
+			/* RESTART GAME */
+			reset_cur_game();
+		}
+	}
+	else {
+		/* WALK */
+		var prevPlayerDirection = curPlayerDirection;
+
+		if ( input.isKeyDown( key.left ) || input.isKeyDown( key.a ) || input.swipeLeft() ) {
+			curPlayerDirection = Direction.Left;
+		}
+		else if ( input.isKeyDown( key.right ) || input.isKeyDown( key.d ) || input.swipeRight() ) {
+			curPlayerDirection = Direction.Right;
+		}
+		else if ( input.isKeyDown( key.up ) || input.isKeyDown( key.w ) || input.swipeUp() ) {
+			curPlayerDirection = Direction.Up;
+		}
+		else if ( input.isKeyDown( key.down ) || input.isKeyDown( key.s ) || input.swipeDown() ) {
+			curPlayerDirection = Direction.Down;
+		}
+		else {
+			curPlayerDirection = Direction.None;
+		}
+
+		if (curPlayerDirection != Direction.None && curPlayerDirection != prevPlayerDirection) {
+			movePlayer( curPlayerDirection );
+			playerHoldToMoveTimer = 500;
+		}
+	}
 }
 
 var animationCounter = 0;
@@ -697,57 +702,38 @@ var Direction = {
 var curPlayerDirection = Direction.None;
 var playerHoldToMoveTimer = 0;
 
-var keyDownList = [];
+var InputManager = function() {
+	var self = this;
 
-function onkeydown(e) {
-	if(e.keyCode == key.left || e.keyCode == key.right || e.keyCode == key.up || e.keyCode == key.down || !isPlayerEmbeddedInEditor)
-		e.preventDefault();
+	var pressed;
+	var ignored;
+	var newKeyPress;
+	var touchState;
 
-	if( keyDownList.indexOf( e.keyCode ) != -1 ) {
-		// key already down --- do nothing
-		return;
+	function resetAll() {
+		pressed = {};
+		ignored = {};
+		newKeyPress = false;
+
+		touchState = {
+			isDown : false,
+			startX : 0,
+			startY : 0,
+			curX : 0,
+			curY : 0,
+			swipeDistance : 30,
+			swipeDirection : Direction.None,
+			tapReleased : false
+		};
+	}
+	resetAll();
+
+	function stopWindowScrolling(e) {
+		if(e.keyCode == key.left || e.keyCode == key.right || e.keyCode == key.up || e.keyCode == key.down || !isPlayerEmbeddedInEditor)
+			e.preventDefault();
 	}
 
-	curPlayerDirection = Direction.None;
-
-	if( dialogBuffer.IsActive() ) {
-		/* CONTINUE DIALOG */
-		if (dialogBuffer.CanContinue()) {
-			var hasMoreDialog = dialogBuffer.Continue();
-			if(!hasMoreDialog) {
-				console.log("EXIT DIALOG --- onkeydown")
-				onExitDialog();
-			}
-		}
-		else {
-			dialogBuffer.Skip();
-		}
-	}
-	else if ( isEnding ) {
-		/* RESTART GAME */
-		reset_cur_game();
-	}
-	else {
-		/* WALK */
-		if ( e.keyCode == key.left || e.keyCode == key.a ) {
-			curPlayerDirection = Direction.Left;
-		}
-		else if ( e.keyCode == key.right || e.keyCode == key.d ) {
-			curPlayerDirection = Direction.Right;
-		}
-		else if ( e.keyCode == key.up || e.keyCode == key.w ) {
-			curPlayerDirection = Direction.Up;
-		}
-		else if ( e.keyCode == key.down || e.keyCode == key.s ) {
-			curPlayerDirection = Direction.Down;
-		}
-		movePlayer( curPlayerDirection );
-
-		if( curPlayerDirection != Direction.None )
-		{
-			playerHoldToMoveTimer = 500;
-		}
-
+	function tryRestartGame(e) {
 		/* RESTART GAME */
 		if ( e.keyCode === key.r && ( e.getModifierState("Control") || e.getModifierState("Meta") ) ) {
 			if ( confirm("Restart the game?") ) {
@@ -756,12 +742,158 @@ function onkeydown(e) {
 		}
 	}
 
-	if( keyDownList.indexOf( e.keyCode ) == -1 )
-		keyDownList.push( e.keyCode );
+	function eventIsModifier(event) {
+		return (event.keyCode == key.shift || event.keyCode == key.ctrl || event.keyCode == key.alt || event.keyCode == key.cmd);
+	}
 
-	console.log("KEY DOWN " + keyDownList.length );
-	console.log(keyDownList);
+	function isModifierKeyDown() {
+		return ( self.isKeyDown(key.shift) || self.isKeyDown(key.ctrl) || self.isKeyDown(key.alt) || self.isKeyDown(key.cmd) );
+	}
+
+	this.ignoreHeldKeys = function() {
+		for (var key in pressed) {
+			if (pressed[key]) { // only ignore keys that are actually held
+				ignored[key] = true;
+				// console.log("IGNORE -- " + key);
+			}
+		}
+	}
+
+	this.onkeydown = function(event) {
+		// console.log("KEYDOWN -- " + event.keyCode);
+
+		stopWindowScrolling(event);
+
+		tryRestartGame(event);
+
+		// Special keys being held down can interfere with keyup events and lock movement
+		// so just don't collect input when they're held
+		{
+			if (isModifierKeyDown()) {
+				return;
+			}
+
+			if (eventIsModifier(event)) {
+				resetAll();
+			}
+		}
+
+		if (ignored[event.keyCode]) {
+			return;
+		}
+
+		if (!self.isKeyDown(event.keyCode)) {
+			newKeyPress = true;
+		}
+
+		pressed[event.keyCode] = true;
+		ignored[event.keyCode] = false;
+	}
+
+	this.onkeyup = function(event) {
+		// console.log("KEYUP -- " + event.keyCode);
+		pressed[event.keyCode] = false;
+		ignored[event.keyCode] = false;
+	}
+
+	this.ontouchstart = function(event) {
+		event.preventDefault();
+
+		if( event.changedTouches.length > 0 ) {
+			touchState.isDown = true;
+
+			touchState.startX = touchState.curX = event.changedTouches[0].clientX;
+			touchState.startY = touchState.curY = event.changedTouches[0].clientY;
+
+			touchState.swipeDirection = Direction.None;
+		}
+	}
+
+	this.ontouchmove = function(event) {
+		event.preventDefault();
+
+		if( touchState.isDown && event.changedTouches.length > 0 ) {
+			touchState.curX = event.changedTouches[0].clientX;
+			touchState.curY = event.changedTouches[0].clientY;
+
+			var prevDirection = touchState.swipeDirection;
+
+			if( touchState.curX - touchState.startX <= -touchState.swipeDistance ) {
+				touchState.swipeDirection = Direction.Left;
+			}
+			else if( touchState.curX - touchState.startX >= touchState.swipeDistance ) {
+				touchState.swipeDirection = Direction.Right;
+			}
+			else if( touchState.curY - touchState.startY <= -touchState.swipeDistance ) {
+				touchState.swipeDirection = Direction.Up;
+			}
+			else if( touchState.curY - touchState.startY >= touchState.swipeDistance ) {
+				touchState.swipeDirection = Direction.Down;
+			}
+
+			if( touchState.swipeDirection != prevDirection ) {
+				// reset center so changing directions is easier
+				touchState.startX = touchState.curX;
+				touchState.startY = touchState.curY;
+			}
+		}
+	}
+
+	this.ontouchend = function(event) {
+		event.preventDefault();
+
+		touchState.isDown = false;
+
+		if( touchState.swipeDirection == Direction.None ) {
+			// tap!
+			touchState.tapReleased = true;
+		}
+
+		touchState.swipeDirection = Direction.None;
+	}
+
+	this.isKeyDown = function(keyCode) {
+		return pressed[keyCode] != null && pressed[keyCode] == true && (ignored[keyCode] == null || ignored[keyCode] == false);
+	}
+
+	this.anyKeyPressed = function() {
+		return newKeyPress;
+	}
+
+	this.resetKeyPressed = function() {
+		newKeyPress = false;
+	}
+
+	this.swipeLeft = function() {
+		return touchState.swipeDirection == Direction.Left;
+	}
+
+	this.swipeRight = function() {
+		return touchState.swipeDirection == Direction.Right;
+	}
+
+	this.swipeUp = function() {
+		return touchState.swipeDirection == Direction.Up;
+	}
+
+	this.swipeDown = function() {
+		return touchState.swipeDirection == Direction.Down;
+	}
+
+	this.isTapReleased = function() {
+		return touchState.tapReleased;
+	}
+
+	this.resetTapReleased = function() {
+		touchState.tapReleased = false;
+	}
+
+	this.onblur = function() {
+		// console.log("~~~ BLUR ~~");
+		resetAll();
+	}
 }
+var input = null;
 
 function movePlayer(direction) {
 	var spr = null;
@@ -786,19 +918,9 @@ function movePlayer(direction) {
 	var ext = getExit( player().room, player().x, player().y );
 	var end = getEnding( player().room, player().x, player().y );
 	var itmIndex = getItemIndex( player().room, player().x, player().y );
-	if (end) {
-		startNarrating( ending[end.id], true /*isEnding*/ );
-	}
-	else if (ext) {
-		player().room = ext.dest.room;
-		player().x = ext.dest.x;
-		player().y = ext.dest.y;
-		curRoom = ext.dest.room;
-	}
-	else if (spr) {
-		startSpriteDialog( spr /*spriteId*/ );
-	}
-	else if (itmIndex > -1) {
+
+	// do items first, because you can pick up an item AND go through a door
+	if (itmIndex > -1) {
 		// TODO pick up items (what about touch?)
 		// console.log("HIT ITM ");
 		// console.log( itmIndex );
@@ -817,120 +939,19 @@ function movePlayer(direction) {
 
 		// console.log( player().inventory );
 	}
-}
 
-function onkeyup(e) {
-
-	if(e.keyCode == key.left || e.keyCode == key.right || e.keyCode == key.up || e.keyCode == key.down || !isPlayerEmbeddedInEditor)
-		e.preventDefault();
-
-	if( keyDownList.indexOf( e.keyCode ) != -1 )
-		keyDownList.splice( keyDownList.indexOf( e.keyCode ), 1 );
-
-	// todo is this robust enough?
-	if( keyDownList.length <= 0 )
-		curPlayerDirection = Direction.None;
-
-	console.log(e.keyCode);
-	console.log("KEY UP " + keyDownList.length );
-	console.log(keyDownList);
-	console.log("_____");
-}
-
-var touchInfo = {
-	isDown : false,
-	startX : 0,
-	startY : 0,
-	curX : 0,
-	curY : 0
-};
-
-function ontouchstart(e) {
-	e.preventDefault();
-
-	if( e.changedTouches.length > 0 ) {
-		touchInfo.isDown = true;
-
-		console.log(e);
-
-		touchInfo.startX = touchInfo.curX = e.changedTouches[0].clientX;
-		touchInfo.startY = touchInfo.curY = e.changedTouches[0].clientY;
-
-		console.log("MOUSE DOWN");
-		console.log(touchInfo);
-
-		curPlayerDirection = Direction.None;
+	if (end) {
+		startNarrating( ending[end.id], true /*isEnding*/ );
 	}
-}
-
-var swipeDistance = 30;
-function ontouchmove(e) {
-	e.preventDefault();
-
-	console.log("MOUSE MOVE");
-	console.log(touchInfo);
-
-	if( !dialogBuffer.IsActive() && touchInfo.isDown && e.changedTouches.length > 0 ) {
-		touchInfo.curX = e.changedTouches[0].clientX;
-		touchInfo.curY = e.changedTouches[0].clientY;
-
-		var prevDirection = curPlayerDirection;
-
-		console.log( touchInfo.curX - touchInfo.startX );
-
-		if( touchInfo.curX - touchInfo.startX <= -swipeDistance ) {
-			curPlayerDirection = Direction.Left;
-		}
-		else if( touchInfo.curX - touchInfo.startX >= swipeDistance ) {
-			curPlayerDirection = Direction.Right;
-		}
-		else if( touchInfo.curY - touchInfo.startY <= -swipeDistance ) {
-			curPlayerDirection = Direction.Up;
-		}
-		else if( touchInfo.curY - touchInfo.startY >= swipeDistance ) {
-			curPlayerDirection = Direction.Down;
-		}
-
-		if( curPlayerDirection != prevDirection ) {
-			movePlayer( curPlayerDirection );
-			playerHoldToMoveTimer = 300;
-			// reset center
-			touchInfo.startX = touchInfo.curX;
-			touchInfo.startY = touchInfo.curY;
-		}
+	else if (ext) {
+		player().room = ext.dest.room;
+		player().x = ext.dest.x;
+		player().y = ext.dest.y;
+		curRoom = ext.dest.room;
 	}
-}
-
-function ontouchend(e) {
-	e.preventDefault();
-
-	console.log("MOUSE UP");
-	console.log(touchInfo);
-
-	touchInfo.isDown = false;
-
-	if( curPlayerDirection == Direction.None ) {
-		// tap!
-		if( dialogBuffer.IsActive() ) {
-			/* CONTINUE DIALOG */
-			if (dialogBuffer.CanContinue()) {
-				var hasMoreDialog = dialogBuffer.Continue();
-				if(!hasMoreDialog) {
-					console.log("EXIT DIALOG --- onkeydown")
-					onExitDialog();
-				}
-			}
-			else {
-				dialogBuffer.Skip();
-			}
-		}
-		else if ( isEnding ) {
-			/* RESTART GAME */
-			reset_cur_game();
-		}
+	else if (spr) {
+		startSpriteDialog( spr /*spriteId*/ );
 	}
-
-	curPlayerDirection = Direction.None;
 }
 
 function getItemIndex( roomId, x, y ) {
@@ -1047,7 +1068,14 @@ function isSpriteOffstage(id) {
 }
 
 function parseWorld(file) {
+	// console.log("~~~ PARSE WORLD ~~~");
+	// console.log(file);
+
+	// var parseTimer = new Timer();
+
 	resetFlags();
+
+	var versionNumber = 0;
 
 	var lines = file.split("\n");
 	var i = 0;
@@ -1060,6 +1088,11 @@ function parseWorld(file) {
 			i = parseTitle(lines, i);
 		}
 		else if (curLine.length <= 0 || curLine.charAt(0) === "#") {
+			// collect version number (from a comment.. hacky I know)
+			if (curLine.indexOf("# BITSY VERSION ") != -1) {
+				versionNumber = parseFloat(curLine.replace("# BITSY VERSION ", ""));
+			}
+
 			//skip blank lines & comments
 			i++;
 		}
@@ -1090,6 +1123,12 @@ function parseWorld(file) {
 		else if (getType(curLine) === "VAR") {
 			i = parseVariable(lines, i);
 		}
+		else if (getType(curLine) === "DEFAULT_FONT") {
+			i = parseFontName(lines, i);
+		}
+		else if (getType(curLine) === "FONT") {
+			i = parseFontData(lines, i);
+		}
 		else if (getType(curLine) === "!") {
 			i = parseFlag(lines, i);
 		}
@@ -1102,11 +1141,20 @@ function parseWorld(file) {
 		curRoom = player().room;
 	}
 
-	console.log(names);
+	renderer.SetPalettes(palette);
+
+	// console.log(names);
+
+	// console.log("~~~~~ PARSE TIME " + parseTimer.Milliseconds());
+
+	return versionNumber;
 }
 
 //TODO this is in progress and doesn't support all features
-function serializeWorld() {
+function serializeWorld(skipFonts) {
+	if (skipFonts === undefined || skipFonts === null)
+		skipFonts = false;
+
 	var worldStr = "";
 	/* TITLE */
 	worldStr += title + "\n";
@@ -1119,6 +1167,11 @@ function serializeWorld() {
 		worldStr += "! " + f + " " + flags[f] + "\n";
 	}
 	worldStr += "\n"
+	/* FONT */
+	if (fontName != defaultFontName) {
+		worldStr += "DEFAULT_FONT " + fontName + "\n";
+		worldStr += "\n"
+	}
 	/* PALETTE */
 	for (id in palette) {
 		worldStr += "PAL " + id + "\n";
@@ -1215,6 +1268,10 @@ function serializeWorld() {
 			/* WALL */
 			worldStr += "WAL " + tile[id].isWall + "\n";
 		}
+		if (tile[id].col != null && tile[id].col != undefined && tile[id].col != 1) {
+			/* COLOR OVERRIDE */
+			worldStr += "COL " + tile[id].col + "\n";
+		}
 		worldStr += "\n";
 	}
 	/* SPRITES */
@@ -1237,6 +1294,10 @@ function serializeWorld() {
 				worldStr += "ITM " + itemId + " " + sprite[id].inventory[itemId] + "\n";
 			}
 		}
+		if (sprite[id].col != null && sprite[id].col != undefined && sprite[id].col != 2) {
+			/* COLOR OVERRIDE */
+			worldStr += "COL " + sprite[id].col + "\n";
+		}
 		worldStr += "\n";
 	}
 	/* ITEMS */
@@ -1249,6 +1310,10 @@ function serializeWorld() {
 		}
 		if (item[id].dlg != null) {
 			worldStr += "DLG " + item[id].dlg + "\n";
+		}
+		if (item[id].col != null && item[id].col != undefined && item[id].col != 2) {
+			/* COLOR OVERRIDE */
+			worldStr += "COL " + item[id].col + "\n";
 		}
 		worldStr += "\n";
 	}
@@ -1270,20 +1335,27 @@ function serializeWorld() {
 		worldStr += variable[id] + "\n";
 		worldStr += "\n";
 	}
+	/* FONT */
+	// TODO : support multiple fonts
+	if (fontName != defaultFontName && !skipFonts) {
+		worldStr += fontManager.GetData(fontName);
+	}
+
 	return worldStr;
 }
 
 function serializeDrawing(drwId) {
+	var imageSource = renderer.GetImageSource(drwId);
 	var drwStr = "";
-	for (f in imageStore.source[drwId]) {
-		for (y in imageStore.source[drwId][f]) {
+	for (f in imageSource) {
+		for (y in imageSource[f]) {
 			var rowStr = "";
-			for (x in imageStore.source[drwId][f][y]) {
-				rowStr += imageStore.source[drwId][f][y][x];
+			for (x in imageSource[f][y]) {
+				rowStr += imageSource[f][y][x];
 			}
 			drwStr += rowStr + "\n";
 		}
-		if (f < (imageStore.source[drwId].length-1)) drwStr += ">\n";
+		if (f < (imageSource.length-1)) drwStr += ">\n";
 	}
 	return drwStr;
 }
@@ -1511,7 +1583,7 @@ function parseTile(lines, i) {
 	while (i < lines.length && lines[i].length > 0) { //look for empty line
 		if (getType(lines[i]) === "COL") {
 			colorIndex = parseInt( getId(lines[i]) );
-		}	
+		}
 		else if (getType(lines[i]) === "NAME") {
 			/* NAME */
 			name = lines[i].split(/\s(.+)/)[1];
@@ -1534,9 +1606,9 @@ function parseTile(lines, i) {
 		drw : drwId, //drawing id
 		col : colorIndex,
 		animation : {
-			isAnimated : (imageStore.source[drwId].length > 1),
+			isAnimated : (renderer.GetFrameCount(drwId) > 1),
 			frameIndex : 0,
-			frameCount : imageStore.source[drwId].length
+			frameCount : renderer.GetFrameCount(drwId)
 		},
 		name : name,
 		isWall : isWall
@@ -1609,9 +1681,9 @@ function parseSprite(lines, i) {
 		y : -1,
 		walkingPath : [], //tile by tile movement path (isn't saved)
 		animation : {
-			isAnimated : (imageStore.source[drwId].length > 1),
+			isAnimated : (renderer.GetFrameCount(drwId) > 1),
 			frameIndex : 0,
-			frameCount : imageStore.source[drwId].length
+			frameCount : renderer.GetFrameCount(drwId)
 		},
 		inventory : startingInventory,
 		name : name
@@ -1675,9 +1747,9 @@ function parseItem(lines, i) {
 		// x : -1,
 		// y : -1,
 		animation : {
-			isAnimated : (imageStore.source[drwId].length > 1),
+			isAnimated : (renderer.GetFrameCount(drwId) > 1),
 			frameIndex : 0,
-			frameCount : imageStore.source[drwId].length
+			frameCount : renderer.GetFrameCount(drwId)
 		},
 		name : name
 	};
@@ -1695,8 +1767,8 @@ function parseDrawing(lines, i) {
 }
 
 function parseDrawingCore(lines, i, drwId) {
-	imageStore.source[drwId] = []; //init list of frames
-	imageStore.source[drwId].push( [] ); //init first frame
+	var frameList = []; //init list of frames
+	frameList.push( [] ); //init first frame
 	var frameIndex = 0;
 	var y = 0;
 	while ( y < tilesize ) {
@@ -1705,14 +1777,14 @@ function parseDrawingCore(lines, i, drwId) {
 		for (x = 0; x < tilesize; x++) {
 			row.push( parseInt( l.charAt(x) ) );
 		}
-		imageStore.source[drwId][frameIndex].push( row );
+		frameList[frameIndex].push( row );
 		y++;
 
 		if (y === tilesize) {
 			i = i + y;
 			if ( lines[i] != undefined && lines[i].charAt(0) === ">" ) {
 				// start next frame!
-				imageStore.source[drwId].push( [] );
+				frameList.push( [] );
 				frameIndex++;
 				//start the count over again for the next frame
 				i++;
@@ -1721,95 +1793,9 @@ function parseDrawingCore(lines, i, drwId) {
 		}
 	}
 
-	//console.log(imageStore.source[drwId]);
+	renderer.SetImageSource(drwId, frameList);
+
 	return i;
-}
-
-function renderImages() {
-	console.log(" -- RENDER IMAGES -- ");
-
-	//init image store
-	for (pal in palette) {
-		imageStore.render[pal] = {
-			"1" : {}, //images with primary color index 1 (usually tiles)
-			"2" : {}  //images with primary color index 2 (usually sprites)
-		};
-	}
-
-	//render images required by sprites
-	for (s in sprite) {
-		var spr = sprite[s];
-		renderImageForAllPalettes( spr );
-	}
-	//render images required by tiles
-	for (t in tile) {
-		var til = tile[t];
-		renderImageForAllPalettes( til );
-	}
-	//render images required by tiles
-	for (i in item) {
-		var itm = item[i];
-		renderImageForAllPalettes( itm );
-	}
-}
-
-function renderImageForAllPalettes(drawing) {
-	console.log("RENDER IMAGE");
-	for (pal in palette) {
-		console.log(pal);
-		var col = drawing.col;
-		var colStr = "" + col;
-		console.log(drawing);
-		console.log(drawing.drw);
-		console.log(imageStore);
-		var imgSrc = imageStore.source[ drawing.drw ];
-		if ( imgSrc.length <= 1 ) {
-			// non-animated drawing
-			var frameSrc = imgSrc[0];
-			console.log(drawing);
-			console.log(imageStore);
-			imageStore.render[pal][colStr][drawing.drw] = imageDataFromImageSource( frameSrc, pal, col );
-		}
-		else {
-			// animated drawing
-			var frameCount = 0;
-			for (f in imgSrc) {
-				var frameSrc = imgSrc[f];
-				var frameId = drawing.drw + "_" + frameCount;
-				imageStore.render[pal][colStr][frameId] = imageDataFromImageSource( frameSrc, pal, col );
-				frameCount++;
-			}
-		}		
-	}
-}
-
-function imageDataFromImageSource(imageSource, pal, col) {
-	//console.log(imageSource);
-
-	var img = ctx.createImageData(tilesize*scale,tilesize*scale);
-	for (var y = 0; y < tilesize; y++) {
-		for (var x = 0; x < tilesize; x++) {
-			var px = imageSource[y][x];
-			for (var sy = 0; sy < scale; sy++) {
-				for (var sx = 0; sx < scale; sx++) {
-					var pxl = (((y * scale) + sy) * tilesize * scale * 4) + (((x*scale) + sx) * 4);
-					if (px === 1) {
-						img.data[pxl + 0] = getPal(pal)[col][0]; //ugly
-						img.data[pxl + 1] = getPal(pal)[col][1];
-						img.data[pxl + 2] = getPal(pal)[col][2];
-						img.data[pxl + 3] = 255;
-					}
-					else { //ch === 0
-						img.data[pxl + 0] = getPal(pal)[0][0];
-						img.data[pxl + 1] = getPal(pal)[0][1];
-						img.data[pxl + 2] = getPal(pal)[0][2];
-						img.data[pxl + 3] = 255;
-					}
-				}
-			}
-		}
-	}
-	return img;
 }
 
 function parseDialog(lines, i) {
@@ -1842,6 +1828,32 @@ function parseVariable(lines, i) {
 	return i;
 }
 
+function parseFontName(lines, i) {
+	fontName = getArg(lines[i], 1);
+	i++;
+	return i;
+}
+
+function parseFontData(lines, i) {
+	// NOTE : we're not doing the actual parsing here --
+	// just grabbing the block of text that represents the font
+	// and giving it to the font manager to use later
+
+	var localFontName = getId(lines[i]);
+	var localFontData = lines[i];
+	i++;
+
+	while (i < lines.length && lines[i] != "") {
+		localFontData += "\n" + lines[i];
+		i++;
+	}
+
+	var localFontFilename = localFontName + fontManager.GetExtension();
+	fontManager.AddResource( localFontFilename, localFontData );
+
+	return i;
+}
+
 function parseFlag(lines, i) {
 	var id = getId(lines[i]);
 	var valStr = lines[i].split(" ")[2];
@@ -1865,7 +1877,15 @@ function drawItem(img,x,y,context) {
 	drawTile(img,x,y,context); //TODO these methods are dumb and repetitive
 }
 
-function drawRoom(room,context) {
+function drawRoom(room,context,frameIndex) { // context & frameIndex are optional
+	if (!context) { //optional pass in context; otherwise, use default (ok this is REAL hacky isn't it)
+		context = ctx;
+	}
+
+	//clear screen
+	context.fillStyle = "rgb(" + getPal(curPal())[0][0] + "," + getPal(curPal())[0][1] + "," + getPal(curPal())[0][2] + ")";
+	context.fillRect(0,0,canvas.width,canvas.height);
+
 	//draw tiles
 	for (i in room.tilemap) {
 		for (j in room.tilemap[i]) {
@@ -1878,83 +1898,38 @@ function drawRoom(room,context) {
 				}
 				else {
 					// console.log(id);
-					drawTile( getTileImage(tile[id],getRoomPal(room.id)), j, i, context );
+					drawTile( getTileImage(tile[id],getRoomPal(room.id),frameIndex), j, i, context );
 				}
 			}
 		}
 	}
+
 	//draw items
 	for (var i = 0; i < room.items.length; i++) {
 		var itm = room.items[i];
-		drawItem( getItemImage(item[itm.id],getRoomPal(room.id)), itm.x, itm.y, context );
+		drawItem( getItemImage(item[itm.id],getRoomPal(room.id),frameIndex), itm.x, itm.y, context );
 	}
+
 	//draw sprites
 	for (id in sprite) {
 		var spr = sprite[id];
 		if (spr.room === room.id) {
-			drawSprite( getSpriteImage(spr,getRoomPal(room.id)), spr.x, spr.y, context );
+			drawSprite( getSpriteImage(spr,getRoomPal(room.id),frameIndex), spr.x, spr.y, context );
 		}
 	}
 }
 
+// TODO : remove these get*Image methods
 function getTileImage(t,palId,frameIndex) {
-	if( frameIndex === undefined ) frameIndex = null; // no default parameter support on iOS
-
-	var drwId = t.drw;
-
-	if (!palId) palId = curPal();
-
-	if ( t.animation.isAnimated ) {
-		if (frameIndex != null) { // use optional provided frame index
-			// console.log("GET TILE " + frameIndex);
-			drwId += "_" + frameIndex;
-		}
-		else { // or the one bundled with the tile
-			drwId += "_" + t.animation.frameIndex;
-		}
-	}
-	return imageStore.render[ palId ][ t.col ][ drwId ];
+	return renderer.GetImage(t,palId,frameIndex);
 }
 
 function getSpriteImage(s,palId,frameIndex) {
-	if( frameIndex === undefined ) frameIndex = null; // no default parameter support on iOS
-
-	var drwId = s.drw;
-
-	if (!palId) palId = curPal();
-
-	if ( s.animation.isAnimated ) {
-		if (frameIndex != null) {
-			drwId += "_" + frameIndex;
-		}
-		else {
-			drwId += "_" + s.animation.frameIndex;
-		}
-	}
-
-	return imageStore.render[ palId ][ s.col ][ drwId ];
+	return renderer.GetImage(s,palId,frameIndex);
 }
 
-function getItemImage(itm,palId,frameIndex) { //aren't these all the same????
-	if( frameIndex === undefined ) frameIndex = null; // no default parameter support on iOS
-
-	var drwId = itm.drw;
-	// console.log(drwId);
-
-	if (!palId) palId = curPal();
-
-	if ( itm.animation.isAnimated ) {
-		if (frameIndex != null) {
-			drwId += "_" + frameIndex;
-		}
-		else {
-			drwId += "_" + itm.animation.frameIndex;
-		}
-	}
-
-	// console.log(imageStore.render[ palId ][ itm.col ]);
-	// console.log(imageStore.render[ palId ][ itm.col ][ drwId ]);
-	return imageStore.render[ palId ][ itm.col ][ drwId ];
+function getItemImage(itm,palId,frameIndex) {
+	return renderer.GetImage(itm,palId,frameIndex);
 }
 
 function curPal() {
@@ -1985,6 +1960,7 @@ var isEnding = false;
 var dialogModule = new Dialog();
 var dialogRenderer = dialogModule.CreateRenderer();
 var dialogBuffer = dialogModule.CreateBuffer();
+var fontManager = new FontManager();
 
 function onExitDialog() {
 	// var breakShit = null;
@@ -2036,6 +2012,9 @@ function startSpriteDialog(spriteId) {
 }
 
 function startDialog(dialogStr,scriptId) {
+	console.log("START DIALOG ");
+	console.log(dialogStr);
+
 	if(dialogStr.length <= 0) {
 		console.log("ON EXIT DIALOG -- startDialog 1");
 		onExitDialog();

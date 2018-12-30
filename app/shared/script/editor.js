@@ -1,6 +1,126 @@
-/* 
+/*
+PERF NOTES:
+- loading idea: use long animations to create the loading animation
+- handle parsing performance (especially LARGE fonts)
+- load hidden thumbnails over time
+
+POST 5.0 TODOs:
+X fix move on end dialog bug
+icelandic
+estonian
+arabic
+esperanto
+[one other? hungarian?]
+X bug where big fonts slow down re-writing the game data (toggle to show the font data?)
+	- cause: writing a ton of data into the game data text box
+		fixes: hide/show font in game data, make "async" re-write of textbox (will that work?)
+X asian font : NS_ERROR_DOM_QUOTA_REACHED: Persistent storage maximum size reached
+	- ideas: don't save fonts in the game data until download ... just store the names (note: could cause some bugs)
+
+POST 5.0 longer term:
+- desktop apps
+- homepage (bitsy.org)
+- arabic pixel font
+- scripting documentation
+- fix perf of game data box (async writing?)
+- perf of sprite selector
+- loading screen
+- controls screen
+- async loading
+- parsing module
+- game data object w/ event subscription
+- rendering module w/ image lookup methods
+- EXITS + rooms + script update
+- choice dialog
+- music editor
+
+Loading sprites
+- black or blue background?
+- how to store loading images? DRW?
+-- DRW isn't preserved or rendered
+---
+SPR a
+00000000
+00000000
+01010001
+01110001
+01110010
+01111100
+00111100
+00100100
+DLG SPR_0
+POS 0 5,7
+
+SPR b
+00000000
+00000000
+00100000
+00100000
+00111000
+00100100
+00100100
+00111000
+POS 0 6,7
+
+SPR c
+00000000
+00000000
+00000000
+00010000
+00000000
+00010000
+00010000
+00011000
+POS 0 7,7
+
+SPR d
+00000000
+00000000
+00010000
+00010000
+00111000
+00010000
+00010000
+00011000
+POS 0 8,7
+
+SPR e
+00000000
+00000000
+00000000
+00011100
+00100000
+00011000
+00000100
+00111000
+POS 0 9,7
+
+SPR f
+00000000
+00000000
+00000000
+00010100
+00010100
+00010100
+00001000
+00110000
+POS 0 10,7
+---
+
+TEST desktop editor:
+- feature: drag tools past edge of window
+- feature: visual room select
+- feature: copy sprites w/ room
+- bug: duplicate drawing -> weird thumbnail formatting
+
+TODO:
+make branch off of: https://github.com/le-doux/bitsy/commit/e2ab6cb15ac328ad9cd596edcfc6c89e2caed2b4
+https://stackoverflow.com/questions/7167645/how-do-i-create-a-new-git-branch-from-an-old-commit
+
 CONFIRMED BUGS
--
+- iOS editor is broken again
+- bug with mobile (iOS safari) not loading itch games every time
+- animation bugs: https://twitter.com/skodone/status/942019687550017542
 
 TODO: touch controls
 X figure out scaling (_test windows / android)
@@ -17,14 +137,11 @@ SPOTTED BUGS
 - weird ghost tiles in exit map
 - overlapping entrance & exit things on regular map
 - ending undefined bug (how repro?)
+- but sometimes when pushing an arrow key just once, the avatar will keep moving in the direction until it runs into a wall/sprite
 
 NEW FEATURE IDEAS
 - plugin
 - import / export tiles
-- mobile ideas
-	- responsive window with min size, max size?
-	- swiping
-	- transparent iframe bg?
 - editor behaves odd in playtest mode -- disable more stuff (and make it more clear!)
 - need newlines in endings
 
@@ -219,52 +336,27 @@ first bitsy tweet: https://twitter.com/adamledoux/status/787434344776241153
 /*
 NOTES
 - remember to run chrome like this to test "open /Applications/Google\ Chrome.app --args --allow-file-access-from-files"
+- useful for icon conversions: https://iconverticons.com/online/
 */
 
-/* MODES */
-var TileType = {
-	Tile : 0,
-	Sprite : 1,
-	Avatar : 2,
-	Item : 3
-};
-var EditMode = {
-	Edit : 0,
-	Play : 1
-};
+var editMode = EditMode.Edit; // TODO : move to core.js?
 
-var editMode = EditMode.Edit;
+/* TOOL CONTROLLERS */
+var roomTool;
+var paintTool;
 
-/* PAINT */
-var paint_canvas;
-var paint_ctx;
-var paint_scale = 32;
-
-var paintMode = TileType.Avatar;
-var drawingId = "A";
-var drawPaintGrid = true;
-var curPaintBrush = 0;
-var isPainting = false;
-var isCurDrawingAnimated = false;
-var curDrawingFrameIndex = 0;
+/* CUR DRAWING */
+var drawing = new DrawingId(TileType.Avatar,"A");
 
 var tileIndex = 0;
 var spriteIndex = 0;
 var itemIndex = 0;
 
 /* ROOM */
-var drawMapGrid = true;
 var roomIndex = 0;
 
 /* ENDINGS */
 var endingIndex = 0;
-
-/* PALETTES */
-var paletteIndex = 0;
-function selectedColorPal() {
-	return sortedPaletteIdList()[ paletteIndex ];
-};
-// var drawingPal = "0";
 
 /* BROWSER COMPATIBILITY */
 var browserFeatures = {
@@ -275,13 +367,17 @@ var browserFeatures = {
 
 /* SCREEN CAPTURE */
 var gifencoder = new gif();
-var isRecordingGif = false;
 var gifFrameData = [];
+
 var isPlayMode = false;
 
 /* EXPORT HTML */
 var makeURL = null;
 var exporter = new Exporter();
+
+/* FONT MANAGER */
+var editorFontManager = new FontManager( true /*useExternalResources*/ );
+var areAllFontsLoaded = false;
 
 function detectBrowserFeatures() {
 	console.log("BROWSER FEATURES");
@@ -302,9 +398,6 @@ function detectBrowserFeatures() {
 			// console.log(input.clientWidth);
 			console.log("WEIRD SAFARI COLOR PICKER IS BAD!");
 			browserFeatures.colorPicker = false;
-			document.getElementById("backgroundColor").type = "text";
-			document.getElementById("tileColor").type = "text";
-			document.getElementById("spriteColor").type = "text";
 			document.getElementById("pageColor").type = "text";
 		}
 		
@@ -330,8 +423,9 @@ function detectBrowserFeatures() {
 }
 
 function hasUnsupportedFeatures() {
-	return !browserFeatures.colorPicker || !browserFeatures.fileDownload;
+	return /*!browserFeatures.colorPicker ||*/ !browserFeatures.fileDownload;
 }
+// NOTE: No longer relying on color picker feature
 
 function showUnsupportedFeatureWarning() {
 	document.getElementById("unsupportedFeatures").style.display = "block";
@@ -355,18 +449,22 @@ var defaultPanelPrefs = {
 		{ id:"endingsPanel", 		visible:false, 	position:8  },
 		{ id:"paintExplorerPanel",	visible:false,	position:9  },
 		{ id:"dialogPanel",			visible:false,	position:10 },
-		{ id:"inventoryPanel",		visible:false,	position:11 }
+		{ id:"inventoryPanel",		visible:false,	position:11 },
+		{ id:"settingsPanel",		visible:false,	position:11 }
 	]
 };
+// console.log(defaultPanelPrefs);
+
 function getPanelPrefs() {
 	// (TODO: weird that engine version and editor version are the same??)
 	var useDefaultPrefs = ( localStorage.engine_version == null ) ||
 							( localStorage.panel_prefs == null ) ||
-							( JSON.parse(localStorage.engine_version).major < 4 ) ||
+							( JSON.parse(localStorage.engine_version).major < 5 ) ||
 							( JSON.parse(localStorage.engine_version).minor < 0 );
 	console.log("USE DEFAULT?? " + useDefaultPrefs);
 	var prefs = useDefaultPrefs ? defaultPanelPrefs : JSON.parse( localStorage.panel_prefs );
 	// add missing panel prefs (if any)
+	// console.log(defaultPanelPrefs);
 	for( var i = 0; i < defaultPanelPrefs.workspace.length; i++ ) {
 		var isMissing = true;
 		var panelPref = defaultPanelPrefs.workspace[i];
@@ -380,27 +478,63 @@ function getPanelPrefs() {
 			prefs.workspace.push( panelPref );
 		}
 	}
+	console.log(prefs);
 	return prefs;
 }
 
+var urlFlags = {};
+function readUrlFlags() {
+	console.log("@@@@@ FLAGGS")
+	var urlSplit = window.location.href.split("?");
+	if (urlSplit.length > 1) {
+		for(var i = 1; i < urlSplit.length; i++) {
+			var flagSplit = urlSplit[i].split("=");
+			urlFlags[ flagSplit[0] ] = flagSplit[1];
+		}
+	}
+	console.log(urlFlags);
+}
+
 function start() {
-	detectBrowserFeatures();
+	// Ed().platform = PlatformType.Mobile;
+
+	isPlayerEmbeddedInEditor = true; // flag for game player to make changes specific to editor
+
+	// test
+	if(Ed().platform === PlatformType.Mobile) {
+		var head = document.getElementsByTagName("head")[0];
+		var link = document.createElement("link");
+		link.rel = "stylesheet";
+		link.type = "text/css";
+		link.href = "shared/style/mobileEditorStyle.css";
+		head.appendChild(link);
+	}
+
+	if(Ed().platform === PlatformType.Desktop)
+		detectBrowserFeatures();
+
+	readUrlFlags();
+
+	// localization
+	if (urlFlags["lang"] != null) {
+		localStorage.editor_language = urlFlags["lang"]; // need to verify this is real language?
+	}
+	localization = new Localization( initLanguageOptions );
 
 	//game canvas & context (also the map editor)
 	attachCanvas( document.getElementById("game") );
-	//map edit events
-	listenMapEditEvents();
 
-	//paint canvas & context
-	paint_canvas = document.getElementById("paint");
-	paint_canvas.width = tilesize * paint_scale;
-	paint_canvas.height = tilesize * paint_scale;
-	paint_ctx = paint_canvas.getContext("2d");
-	//paint events
-	paint_canvas.addEventListener("mousedown", paint_onMouseDown);
-	paint_canvas.addEventListener("mousemove", paint_onMouseMove);
-	paint_canvas.addEventListener("mouseup", paint_onMouseUp);
-	paint_canvas.addEventListener("mouseleave", paint_onMouseUp);
+	//init tool controllers
+	roomTool = new RoomTool(canvas);
+	roomTool.listenEditEvents()
+	roomTool.drawing = drawing;
+	roomTool.editDrawingAtCoordinateCallback = editDrawingAtCoordinate;
+
+	paintTool = new PaintTool(document.getElementById("paint"),roomTool);
+	paintTool.drawing = drawing;
+	paintTool.onReloadTile = function(){ reloadTile() };
+	paintTool.onReloadSprite = function(){ reloadSprite() };
+	paintTool.onReloadItem = function(){ reloadItem() };
 
 	//exit destination canvas & context
 	exit_canvas = document.getElementById("exitCanvas");
@@ -425,10 +559,11 @@ function start() {
 		on_game_data_change_core();
 	}
 	else {
-		//console.log("~~~~ no old save data! ~~~~");
 		setDefaultGameState();
-		refreshGameData();
 	}
+
+	// HACK: avoids breaking the exit room panel if there is no "room 0"
+	selectedExitRoom = curRoom;
 
 	// load panel preferences
 	var prefs = getPanelPrefs();
@@ -453,40 +588,44 @@ function start() {
 
 	//draw everything
 	on_paint_avatar();
-	drawPaintCanvas();
-	drawEditMap();
+	paintTool.updateCanvas();
+	roomTool.drawEditMap();
+
 	updateRoomPaletteSelect(); //dumb to have to specify this here --- wrap up room UI method?
 	updateRoomName(); // init the room UI
 	reloadEnding();
 
 	updateInventoryUI();
 
+	// init color picker
+	colorPicker = new ColorPicker('colorPickerWheel', 'colorPickerSelect', 'colorPickerSlider', 'colorPickerSliderBg', 'colorPickerHexText');
+	document.getElementById("colorPaletteOptionBackground").checked = true;
+	paletteTool = new PaletteTool(colorPicker,["colorPaletteLabelBackground", "colorPaletteLabelTile", "colorPaletteLabelSprite"]);
+	paletteTool.onPaletteChange = onPaletteChange;
+	paletteTool.updateColorPickerUI();
+
+	// init paint explorer
+	paintExplorer = new PaintExplorer("paintExplorer",selectPaint);
+	paintExplorer.Refresh(TileType.Avatar);
+	paintExplorer.ChangeSelection("A");
+	paintTool.explorer = paintExplorer;
+	paintExplorer.SetDisplayCaptions( Ed().platform === PlatformType.Desktop );
+
 	//unsupported feature stuff
-	if (hasUnsupportedFeatures()) showUnsupportedFeatureWarning();
-	if (!browserFeatures.colorPicker) {
-		updatePaletteBorders();
-		document.getElementById("colorPickerHelp").style.display = "block";
-	}
-	if (!browserFeatures.fileDownload) {
-		document.getElementById("downloadHelp").style.display = "block";
+	if(Ed().platform === PlatformType.Desktop) {
+		if (hasUnsupportedFeatures()) {
+			showUnsupportedFeatureWarning();
+		}
+		if (!browserFeatures.fileDownload) {
+			document.getElementById("downloadHelp").style.display = "block";
+		}
 	}
 
-	//respond to player movement event by recording gif frames
-	onPlayerMoved = function() {
-		if (isRecordingGif) 
-			gifFrameData.push( ctx.getImageData(0,0,512,512).data );
-	};
-	onDialogUpdate = function() {
-		// console.log("dialog update!");
-		if (isRecordingGif) {
-			// copy frame 5x to slow it down (hacky)
-			gifFrameData.push( ctx.getImageData(0,0,512,512).data );
-			gifFrameData.push( ctx.getImageData(0,0,512,512).data );
-			gifFrameData.push( ctx.getImageData(0,0,512,512).data );
-			gifFrameData.push( ctx.getImageData(0,0,512,512).data );
-			gifFrameData.push( ctx.getImageData(0,0,512,512).data );
-		}
-	};
+	// gif recording init (should this go in its own file?)
+	gifCaptureCanvas = document.createElement("canvas");
+	gifCaptureCanvas.width = width * scale;
+	gifCaptureCanvas.height = width * scale;
+	gifCaptureCtx = gifCaptureCanvas.getContext("2d");
 
 	onInventoryChanged = function(id) {
 		updateInventoryUI();
@@ -516,7 +655,24 @@ function start() {
 		);
 	};
 
-	isPlayerEmbeddedInEditor = true; // flag for game player to make changes specific to editor
+	// load custom font first, since it is synchronous
+	if (localStorage.custom_font != null) {
+		var fontStorage = JSON.parse(localStorage.custom_font);
+		editorFontManager.AddResource(fontStorage.name + ".bitsyfont", fontStorage.fontdata);
+	}
+
+	// load built-in bitmap fonts from servery (async)
+	editorFontManager.LoadResources([
+		"ascii_small.bitsyfont",
+		"unicode_european_small.bitsyfont",
+		"unicode_european_large.bitsyfont",
+		"unicode_asian.bitsyfont"
+	], function() {
+		console.log("ALL FONTS LOADED"); // TODO : happens multiple times because of hacky implementation :(
+		switchFont(fontName); // hack - make sure the engine font manager is setup too
+		resetMissingCharacterWarning();
+		areAllFontsLoaded = true; // hack
+	});
 
 	//color testing
 	// on_change_color_bg();
@@ -525,225 +681,33 @@ function start() {
 
 	// save latest version used by editor (for compatibility)
 	localStorage.engine_version = JSON.stringify( version );
+
+	// load saved export settings
+	if( localStorage.export_settings ) {
+		export_settings = JSON.parse( localStorage.export_settings );
+		document.getElementById("pageColor").value = export_settings.page_color;
+	}
 }
 
-function setDefaultGameState() {
-	//clear values
-	clearGameData();
-	//hack
-	curDrawingFrameIndex = 0;
-	isCurDrawingAnimated = false;
-	//default values
-	title = "Write your game's title here";
-	paletteIndex = 0;
-	palette[ selectedColorPal() ] = {
-		name : null,
-		colors : 
-			[
-				[0,82,204],
-				[128,159,255],
-				[255,255,255]
-			]
-	};
-	console.log(palette);
-	//default avatar
-	console.log("A");
-	paintMode = TileType.Avatar;
-	//on_paint_avatar();
-	drawingId = "A";
-	var person_data = [[
-		[0,0,0,1,1,0,0,0],
-		[0,0,0,1,1,0,0,0],
-		[0,0,0,1,1,0,0,0],
-		[0,0,1,1,1,1,0,0],
-		[0,1,1,1,1,1,1,0],
-		[1,0,1,1,1,1,0,1],
-		[0,0,1,0,0,1,0,0],
-		[0,0,1,0,0,1,0,0]
-	]];
-	makeSprite( drawingId, person_data );
-	sprite["A"].room = "0";
-	sprite["A"].x = 4;
-	sprite["A"].y = 4;
-	sprite["A"].inventory = {}; // TODO : need a unified place to instantiate sprites instead of this ad hoc nonsense
-	console.log("B");
-	//defualt sprite
-	paintMode = TileType.Sprite;
-	drawingId = "a";
-	//newSprite( drawingId );
-	//on_paint_sprite();
-	var cat_data = [[
-		[0,0,0,0,0,0,0,0],
-		[0,0,0,0,0,0,0,0],
-		[0,1,0,1,0,0,0,1],
-		[0,1,1,1,0,0,0,1],
-		[0,1,1,1,0,0,1,0],
-		[0,1,1,1,1,1,0,0],
-		[0,0,1,1,1,1,0,0],
-		[0,0,1,0,0,1,0,0]
-	]];
-	makeSprite( drawingId, cat_data );
-	sprite["a"].room = "0";
-	sprite["a"].x = 8;
-	sprite["a"].y = 12;
-	sprite["a"].dlg = "SPR_0";
-	dialog["SPR_0"] = "I'm a cat";
-	//default tile
-	console.log("C");
-	paintMode = TileType.Tile;
-	drawingId = "a";
-	//newTile( drawingId );
-	//on_paint_tile();
-	var square_data = [[
-		[1,1,1,1,1,1,1,1],
-		[1,0,0,0,0,0,0,1],
-		[1,0,0,0,0,0,0,1],
-		[1,0,0,1,1,0,0,1],
-		[1,0,0,1,1,0,0,1],
-		[1,0,0,0,0,0,0,1],
-		[1,0,0,0,0,0,0,1],
-		[1,1,1,1,1,1,1,1]
-	]];
-	makeTile( drawingId, square_data );
-	// default item
-	paintMode = TileType.Item;
-	drawingId = "0";
-	var tea_data = [[
-		[0,0,0,0,0,0,0,0],
-		[0,0,0,0,0,0,0,0],
-		[0,0,0,0,0,0,0,0],
-		[0,0,1,1,1,1,0,0],
-		[0,1,1,0,0,1,0,0],
-		[0,0,1,0,0,1,0,0],
-		[0,0,0,1,1,0,0,0],
-		[0,0,0,0,0,0,0,0]
-	]];
-	makeItem( drawingId, tea_data );
-	item["0"].dlg = "ITM_0";
-	item["0"].name = "tea";
-	dialog["ITM_0"] = "You found a nice warm cup of tea";
-	renderImages();
-	console.log("D");
-	// default variable
-	variable["a"] = 42;
-
-	//default room // TODO : there is definitely a better way to instantiate common objects
-	room["0"] = {
-		id : "0",
-		tilemap : [
-				["0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0"],
-				["0","a","a","a","a","a","a","a","a","a","a","a","a","a","a","0"],
-				["0","a","0","0","0","0","0","0","0","0","0","0","0","0","a","0"],
-				["0","a","0","0","0","0","0","0","0","0","0","0","0","0","a","0"],
-				["0","a","0","0","0","0","0","0","0","0","0","0","0","0","a","0"],
-				["0","a","0","0","0","0","0","0","0","0","0","0","0","0","a","0"],
-				["0","a","0","0","0","0","0","0","0","0","0","0","0","0","a","0"],
-				["0","a","0","0","0","0","0","0","0","0","0","0","0","0","a","0"],
-				["0","a","0","0","0","0","0","0","0","0","0","0","0","0","a","0"],
-				["0","a","0","0","0","0","0","0","0","0","0","0","0","0","a","0"],
-				["0","a","0","0","0","0","0","0","0","0","0","0","0","0","a","0"],
-				["0","a","0","0","0","0","0","0","0","0","0","0","0","0","a","0"],
-				["0","a","0","0","0","0","0","0","0","0","0","0","0","0","a","0"],
-				["0","a","0","0","0","0","0","0","0","0","0","0","0","0","a","0"],
-				["0","a","a","a","a","a","a","a","a","a","a","a","a","a","a","0"],
-				["0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0"]
-			],
-		walls : [],
-		exits : [],
-		endings : [],
-		items : [],
-		pal : "0"
-	};
-	console.log("E");
-	refreshGameData();
-	document.getElementById("titleText").value = title;
-}
-
-var mapEditAnimationLoop;
-
-function listenMapEditEvents() {
-	canvas.addEventListener("mousedown", map_onMouseDown);
-	canvas.addEventListener("mousemove", map_onMouseMove);
-	canvas.addEventListener("mouseup", map_onMouseUp);
-	canvas.addEventListener("mouseleave", map_onMouseUp);
-
-	mapEditAnimationLoop =
-		setInterval( function() {
-			animationCounter = animationTime + 1; // hack
-			updateAnimation();
-			drawEditMap();
-		}, animationTime ); // update animation in map mode
-}
-
-function unlistenMapEditEvents() {
-	canvas.removeEventListener("mousedown", map_onMouseDown);
-	canvas.removeEventListener("mousemove", map_onMouseMove);
-	canvas.removeEventListener("mouseup", map_onMouseUp);
-	canvas.removeEventListener("mouseleave", map_onMouseUp);
-	clearInterval( mapEditAnimationLoop );
-}
-
-function newTile(id) {
-	if (id)
-		drawingId = id; //this optional parameter lets me override the default next id
-	else
-		drawingId = nextTileId();
-
-	makeTile(drawingId);
-	reloadTile(); //hack for ui consistency (hack x 2: order matters for animated tiles)
-
-	drawPaintCanvas();
-	refreshGameData();
-
-	tileIndex = Object.keys(tile).length - 1;
+function newDrawing() {
+	paintTool.newDrawing();
 }
 
 function nextTile() {
 	var ids = sortedTileIdList();
 	tileIndex = (tileIndex + 1) % ids.length;
-	drawingId = ids[tileIndex];
-	curDrawingFrameIndex = 0;
-	reloadTile();
+	drawing.id = ids[tileIndex];
+	paintTool.curDrawingFrameIndex = 0;
+	paintTool.reloadDrawing();
 }
 
 function prevTile() {
 	var ids = sortedTileIdList();
 	tileIndex = (tileIndex - 1) % ids.length;
 	if (tileIndex < 0) tileIndex = (ids.length-1);
-	drawingId = ids[tileIndex];
-	curDrawingFrameIndex = 0;
-	reloadTile();
-}
-
-function newSprite(id) {
-	if (id)
-		drawingId = id; //this optional parameter lets me override the default next id
-	else
-		drawingId = nextSpriteId();
-
-	makeSprite(drawingId);
-	reloadSprite(); //hack (order matters for animated tiles)
-
-	drawPaintCanvas();
-	refreshGameData();
-
-	spriteIndex = Object.keys(sprite).length - 1;
-}
-
-function newItem(id) {
-	if (id)
-		drawingId = id; //this optional parameter lets me override the default next id
-	else
-		drawingId = nextItemId();
-
-	makeItem(drawingId);
-	reloadItem(); //hack (order matters for animated tiles)
-
-	drawPaintCanvas();
-	updateInventoryItemUI();
-	refreshGameData();
-
-	itemIndex = Object.keys(item).length - 1;
+	drawing.id = ids[tileIndex];
+	paintTool.curDrawingFrameIndex = 0;
+	paintTool.reloadDrawing();
 }
 
 function updateRoomName() {
@@ -771,7 +735,7 @@ function on_room_name_change() {
 
 function on_drawing_name_change() {
 	var str = document.getElementById("drawingName").value;
-	var obj = getCurPaintObject();
+	var obj = paintTool.getCurObject();
 	var oldName = obj.name;
 	if(str.length > 0)
 		obj.name = str;
@@ -780,17 +744,21 @@ function on_drawing_name_change() {
 
 	updateNamesFromCurData()
 
+	// update display name for thumbnail
+	var displayName = obj.name ? obj.name : getCurPaintModeStr() + " " + drawing.id;
+	paintExplorer.ChangeThumbnailCaption(drawing.id, displayName);
+
 	// make sure items referenced in scripts update their names
-	if(paintMode === TileType.Item) {
-		console.log("SWAP ITEM NAMES");
+	if(drawing.type === TileType.Item) {
+		// console.log("SWAP ITEM NAMES");
 
 		var ItemNameSwapVisitor = function() {
 			var didSwap = false;
 			this.DidSwap = function() { return didSwap; };
 
 			this.Visit = function(node) {
-				console.log("VISIT!");
-				console.log(node);
+				// console.log("VISIT!");
+				// console.log(node);
 
 				if( node.type != "function" || node.name != "item" )
 					return; // not the right type of node
@@ -806,30 +774,32 @@ function on_drawing_name_change() {
 		};
 
 		var newName = obj.name;
-		if(newName === null || newName === undefined) newName = drawingId;
-		if(oldName === null || oldName === undefined) oldName = drawingId;
+		if(newName === null || newName === undefined) newName = drawing.id;
+		if(oldName === null || oldName === undefined) oldName = drawing.id;
 
-		console.log(oldName + " <-> " + newName);
+		// console.log(oldName + " <-> " + newName);
 
 		if(newName != oldName) {
 			for(dlgId in dialog) {
-				console.log("DLG " + dlgId);
+				// console.log("DLG " + dlgId);
 				var dialogScript = scriptInterpreter.Parse( dialog[dlgId] );
 				var visitor = new ItemNameSwapVisitor();
 				dialogScript.VisitAll( visitor );
 				if( visitor.DidSwap() ) {
-					console.log("SWAP!");
-					console.log(dialog[dlgId]);
+					// console.log("SWAP!");
+					// console.log(dialog[dlgId]);
 					var newDialog = dialogScript.Serialize();
 					if(newDialog.indexOf("\n") > -1)
 						newDialog = '"""\n' + newDialog + '\n"""';
 					dialog[dlgId] = newDialog;
-					console.log(dialog[dlgId]);
+					// console.log(dialog[dlgId]);
 				}
 			}
 		}
 
 		updateInventoryItemUI();
+
+		// renderPaintThumbnail( drawing.id ); // hacky way to update name
 	}
 
 	refreshGameData();
@@ -854,12 +824,12 @@ function nextRoom() {
 	var ids = sortedRoomIdList();
 	roomIndex = (roomIndex + 1) % ids.length;
 	curRoom = ids[roomIndex];
-	drawEditMap();
-	drawPaintCanvas();
+	roomTool.drawEditMap();
+	paintTool.updateCanvas();
 	updateRoomPaletteSelect();
-	refreshPaintExplorer( true /*doKeepOldThumbnails*/ );
+	paintExplorer.Refresh( paintTool.drawing.type, true /*doKeepOldThumbnails*/ );
 
-	if (paintMode === TileType.Tile)
+	if (drawing.type === TileType.Tile)
 		updateWallCheckboxOnCurrentTile();
 
 	updateRoomName();
@@ -870,12 +840,12 @@ function prevRoom() {
 	roomIndex--;
 	if (roomIndex < 0) roomIndex = (ids.length-1);
 	curRoom = ids[roomIndex];
-	drawEditMap();
-	drawPaintCanvas();
+	roomTool.drawEditMap();
+	paintTool.updateCanvas();
 	updateRoomPaletteSelect();
-	refreshPaintExplorer( true /*doKeepOldThumbnails*/ );
+	paintExplorer.Refresh( paintTool.drawing.type, true /*doKeepOldThumbnails*/ );
 
-	if (paintMode === TileType.Tile)
+	if (drawing.type === TileType.Tile)
 		updateWallCheckboxOnCurrentTile();
 
 	updateRoomName();
@@ -916,8 +886,8 @@ function duplicateRoom() {
 
 	curRoom = newRoomId;
 	//console.log(curRoom);
-	drawEditMap();
-	drawPaintCanvas();
+	roomTool.drawEditMap();
+	paintTool.updateCanvas();
 	updateRoomPaletteSelect();
 
 	updateRoomName();
@@ -978,8 +948,8 @@ function newRoom() {
 
 	curRoom = roomId;
 	//console.log(curRoom);
-	drawEditMap();
-	drawPaintCanvas();
+	roomTool.drawEditMap();
+	paintTool.updateCanvas();
 	updateRoomPaletteSelect();
 
 	updateRoomName();
@@ -1017,8 +987,8 @@ function deleteRoom() {
 
 		refreshGameData();
 		nextRoom();
-		drawEditMap();
-		drawPaintCanvas();
+		roomTool.drawEditMap();
+		paintTool.updateCanvas();
 		updateRoomPaletteSelect();
 		updateExitOptionsFromGameData();
 		//recreate exit options
@@ -1028,83 +998,69 @@ function deleteRoom() {
 function nextItem() {
 	var ids = sortedItemIdList();
 	itemIndex = (itemIndex + 1) % ids.length;
-	drawingId = ids[itemIndex];
-	curDrawingFrameIndex = 0;
-	reloadItem();
+	drawing.id = ids[itemIndex];
+	paintTool.curDrawingFrameIndex = 0;
+	paintTool.reloadDrawing();
 }
 
 function prevItem() {
 	var ids = sortedItemIdList();
 	itemIndex = (itemIndex - 1) % ids.length;
 	if (itemIndex < 0) itemIndex = (ids.length-1); // loop
-	drawingId = ids[itemIndex];
-	curDrawingFrameIndex = 0;
-	reloadItem();
+	drawing.id = ids[itemIndex];
+	paintTool.curDrawingFrameIndex = 0;
+	paintTool.reloadDrawing();
 }
 
 function nextSprite() {
 	var ids = sortedSpriteIdList();
 	spriteIndex = (spriteIndex + 1) % ids.length;
 	if (spriteIndex === 0) spriteIndex = 1; //skip avatar
-	drawingId = ids[spriteIndex];
-	curDrawingFrameIndex = 0;
-	reloadSprite();
+	drawing.id = ids[spriteIndex];
+	paintTool.curDrawingFrameIndex = 0;
+	paintTool.reloadDrawing();
 }
 
 function prevSprite() {
 	var ids = sortedSpriteIdList();
 	spriteIndex = (spriteIndex - 1) % ids.length;
 	if (spriteIndex <= 0) spriteIndex = (ids.length-1); //loop and skip avatar
-	drawingId = ids[spriteIndex];
-	curDrawingFrameIndex = 0;
-	reloadSprite();
+	drawing.id = ids[spriteIndex];
+	paintTool.curDrawingFrameIndex = 0;
+	paintTool.reloadDrawing();
 }
 
 function next() {
-	if (paintMode == TileType.Tile) {
+	if (drawing.type == TileType.Tile) {
 		nextTile();
 	}
-	else if( paintMode == TileType.Avatar || paintMode == TileType.Sprite ) {
+	else if( drawing.type == TileType.Avatar || drawing.type == TileType.Sprite ) {
 		nextSprite();
 	}
-	else if( paintMode == TileType.Item ) {
+	else if( drawing.type == TileType.Item ) {
 		nextItem();
 	}
-	changePaintExplorerSelection( drawingId );
+	paintExplorer.ChangeSelection( drawing.id );
 }
 
 function prev() {
-	if (paintMode == TileType.Tile) {
+	if (drawing.type == TileType.Tile) {
 		prevTile();
 	}
-	else if( paintMode == TileType.Avatar || paintMode == TileType.Sprite ) {
+	else if( drawing.type == TileType.Avatar || drawing.type == TileType.Sprite ) {
 		prevSprite();
 	}
-	else if( paintMode == TileType.Item ) {
+	else if( drawing.type == TileType.Item ) {
 		prevItem();
 	}
-	changePaintExplorerSelection( drawingId );
-}
-
-function newDrawing() {
-	if (paintMode == TileType.Tile) {
-		newTile();
-	}
-	else if( paintMode == TileType.Avatar || paintMode == TileType.Sprite ) {
-		newSprite();
-	}
-	else if( paintMode == TileType.Item ) {
-		newItem();
-	}
-	addPaintThumbnail( drawingId );
-	changePaintExplorerSelection( drawingId );
+	paintExplorer.ChangeSelection( drawing.id );
 }
 
 function duplicateDrawing() {
-	if (paintMode == TileType.Tile) {
+	if (drawing.type == TileType.Tile) {
 
 		//copy drawing data
-		var sourceImageData = imageStore.source[ "TIL_" + drawingId ];
+		var sourceImageData = renderer.GetImageSource( "TIL_" + drawing.id );
 		var copiedImageData = [];
 		for (f in sourceImageData) {
 			copiedImageData.push([]);
@@ -1116,25 +1072,29 @@ function duplicateDrawing() {
 			}
 		}
 
-		drawingId = nextTileId();
+		var tmpIsWall = tile[ drawing.id ].isWall;
+
+		drawing.id = nextTileId();
 
 		console.log("DUPLICATE TILE");		
-		console.log(drawingId);
+		console.log(drawing.id);
 		console.log(copiedImageData);
 
-		makeTile( drawingId, copiedImageData );
+		makeTile( drawing.id, copiedImageData );
 
-		drawPaintCanvas();
+		tile[ drawing.id ].isWall = tmpIsWall;
+
+		paintTool.updateCanvas();
 		refreshGameData();
 
 		tileIndex = Object.keys(tile).length - 1;
 
-		reloadTile(); //hack for ui consistency
+		paintTool.reloadDrawing(); //hack for ui consistency
 	}
-	else if(paintMode == TileType.Avatar || paintMode == TileType.Sprite) {
+	else if(drawing.type == TileType.Avatar || drawing.type == TileType.Sprite) {
 
 		//copy drawing data -- hacky duplication as usual between sprite and tile :(
-		var sourceImageData = imageStore.source[ "SPR_" + drawingId ];
+		var sourceImageData = renderer.GetImageSource( "SPR_" + drawing.id );
 		var copiedImageData = [];
 		for (f in sourceImageData) {
 			copiedImageData.push([]);
@@ -1146,25 +1106,25 @@ function duplicateDrawing() {
 			}
 		}
 
-		drawingId = nextSpriteId();
+		drawing.id = nextSpriteId();
 
 		console.log("DUPLICATE SPRITE");	
-		console.log(drawingId);
+		console.log(drawing.id);
 		console.log(copiedImageData);
 
-		makeSprite( drawingId, copiedImageData );
+		makeSprite( drawing.id, copiedImageData );
 
-		drawPaintCanvas();
+		paintTool.updateCanvas();
 		refreshGameData();
 
 		spriteIndex = Object.keys(sprite).length - 1;
 
-		reloadSprite(); //hack
+		paintTool.reloadDrawing(); //hack
 	}
-	else if(paintMode == TileType.Item) {
+	else if(drawing.type == TileType.Item) {
 
 		//copy drawing data -- hacky duplication as usual between sprite and tile :(
-		var sourceImageData = imageStore.source[ "ITM_" + drawingId ];
+		var sourceImageData = renderer.GetImageSource( "ITM_" + drawing.id );
 		var copiedImageData = [];
 		for (f in sourceImageData) {
 			copiedImageData.push([]);
@@ -1176,71 +1136,24 @@ function duplicateDrawing() {
 			}
 		}
 
-		drawingId = nextItemId();
+		drawing.id = nextItemId();
 
 		console.log("DUPLICATE ITEM");	
-		console.log(drawingId);
+		console.log(drawing.id);
 		console.log(copiedImageData);
 
-		makeItem( drawingId, copiedImageData );
+		makeItem( drawing.id, copiedImageData );
 
-		drawPaintCanvas();
+		paintTool.updateCanvas();
 		refreshGameData();
 
 		itemIndex = Object.keys(item).length - 1;
 
-		reloadItem(); //hack
+		paintTool.reloadDrawing(); //hack
 		updateInventoryItemUI();
 	}
-	addPaintThumbnail( drawingId );
-	changePaintExplorerSelection( drawingId );
-}
-
-function deleteDrawing() {
-	if ( confirm("Are you sure you want to delete this drawing?") ) {
-		deletePaintThumbnail( drawingId );
-		if (paintMode == TileType.Tile) {
-			if ( Object.keys( tile ).length <= 1 ) { alert("You can't delete your last tile!"); return; }
-			delete tile[ drawingId ];
-			findAndReplaceTileInAllRooms( drawingId, "0" );
-			refreshGameData();
-			renderImages();
-			drawEditMap();
-			nextTile();
-		}
-		else if( paintMode == TileType.Avatar || paintMode == TileType.Sprite ){
-			if ( Object.keys( sprite ).length <= 2 ) { alert("You can't delete your last sprite!"); return; }
-
-			// todo: share with items
-			var dlgId = sprite[ drawingId ].dlg == null ? drawingId : sprite[ drawingId ].dlg;
-			if( dlgId && dialog[ dlgId ] )
-				delete dialog[ dlgId ];
-
-			delete sprite[ drawingId ];
-
-			refreshGameData();
-			renderImages();
-			drawEditMap();
-			nextSprite();
-		}
-		else if( paintMode == TileType.Item ){
-			if ( Object.keys( item ).length <= 1 ) { alert("You can't delete your last item!"); return; }
-
-			var dlgId = item[ drawingId ].dlg;
-			if( dlgId && dialog[ dlgId ] )
-				delete dialog[ dlgId ];
-
-			delete item[ drawingId ];
-
-			removeAllItems( drawingId );
-			refreshGameData();
-			renderImages();
-			drawEditMap();
-			nextItem();
-			updateInventoryItemUI();
-		}
-		changePaintExplorerSelection( drawingId );
-	}
+	paintExplorer.AddThumbnail( drawing.id );
+	paintExplorer.ChangeSelection( drawing.id );
 }
 
 function removeAllItems( id ) {
@@ -1261,34 +1174,22 @@ function removeAllItems( id ) {
 	}
 }
 
-function findAndReplaceTileInAllRooms( findTile, replaceTile ) {
-	for (roomId in room) {
-		for (y in room[roomId].tilemap) {
-			for (x in room[roomId].tilemap[y]) {
-				if (room[roomId].tilemap[y][x] === findTile) {
-					room[roomId].tilemap[y][x] = replaceTile;
-				}
-			}
-		}
-	}
-}
-
 function updateAnimationUI() {
 	//todo
 }
 
 function reloadTile() {
 	// animation UI
-	if ( tile[drawingId] && tile[drawingId].animation.isAnimated ) {
-		isCurDrawingAnimated = true;
+	if ( tile[drawing.id] && tile[drawing.id].animation.isAnimated ) {
+		paintTool.isCurDrawingAnimated = true;
 		document.getElementById("animatedCheckbox").checked = true;
 
-		if( curDrawingFrameIndex == 0)
+		if( paintTool.curDrawingFrameIndex == 0)
 		{
 			document.getElementById("animationKeyframe1").className = "animationThumbnail left selected";
 			document.getElementById("animationKeyframe2").className = "animationThumbnail right unselected";
 		}
-		else if( curDrawingFrameIndex == 1 )
+		else if( paintTool.curDrawingFrameIndex == 1 )
 		{
 			document.getElementById("animationKeyframe1").className = "animationThumbnail left unselected";
 			document.getElementById("animationKeyframe2").className = "animationThumbnail right selected";
@@ -1296,10 +1197,10 @@ function reloadTile() {
 
 		document.getElementById("animation").setAttribute("style","display:block;");
 		document.getElementById("animatedCheckboxIcon").innerHTML = "expand_more";
-		renderAnimationPreview( drawingId );
+		renderAnimationPreview( drawing.id );
 	}
 	else {
-		isCurDrawingAnimated = false;
+		paintTool.isCurDrawingAnimated = false;
 		document.getElementById("animatedCheckbox").checked = false;
 		document.getElementById("animation").setAttribute("style","display:none;");
 		document.getElementById("animatedCheckboxIcon").innerHTML = "expand_less";
@@ -1308,59 +1209,37 @@ function reloadTile() {
 	// wall UI
 	updateWallCheckboxOnCurrentTile();
 
-	updateDrawingNameUI(false);
+	updateDrawingNameUI(true);
 
-	drawPaintCanvas();
+	paintTool.updateCanvas();
 }
 
 function updateWallCheckboxOnCurrentTile() {
-	if (room[curRoom]) { //todo this per-room wall nonsense is confusing
-		if (room[curRoom].walls.indexOf(drawingId) != -1) {
-			document.getElementById("wallCheckbox").checked = true;
-			document.getElementById("wallCheckboxIcon").innerHTML = "border_outer";
-		}
-		else {
-			document.getElementById("wallCheckbox").checked = false;
-			document.getElementById("wallCheckboxIcon").innerHTML = "border_clear";
-		}
-	}
-}
+	var isCurTileWall = false;
 
-function reloadDialogUI() {
-	reloadDialogUICore();
-
-	reloadAdvDialogUI();
-}
-
-function reloadDialogUICore() { // TODO: name is terrible
-	var dialogId = getCurDialogId();
-
-	if (dialogId in dialog) {
-		var dialogLines = dialog[dialogId].split("\n");
-		if(dialogLines[0] === '"""') {
-			// multi line
-			var dialogStr = "";
-			var i = 1;
-			while (i < dialogLines.length && dialogLines[i] != '"""') {
-				dialogStr += dialogLines[i] + (dialogLines[i+1] != '"""' ? '\n' : '');
-				i++;
-			}
-			document.getElementById("dialogText").value = dialogStr;
-		}
-		else {
-			// single line
-			document.getElementById("dialogText").value = dialog[dialogId];
+	if( tile[ drawing.id ].isWall == undefined || tile[ drawing.id ].isWall == null ) {
+		if (room[curRoom]) {
+			isCurTileWall = (room[curRoom].walls.indexOf(drawing.id) != -1);
 		}
 	}
 	else {
-		document.getElementById("dialogText").value = "";
-	}	
+		isCurTileWall = tile[ drawing.id ].isWall;
+	}
+
+	if (isCurTileWall) {
+		document.getElementById("wallCheckbox").checked = true;
+		document.getElementById("wallCheckboxIcon").innerHTML = "border_outer";
+	}
+	else {
+		document.getElementById("wallCheckbox").checked = false;
+		document.getElementById("wallCheckboxIcon").innerHTML = "border_clear";
+	}
 }
 
 // TODO : better name?
 function reloadAdvDialogUI() {
 	// var dialogId = getCurDialogId(); // necessary?
-	if( paintMode === TileType.Sprite || paintMode === TileType.Item ) {
+	if( drawing.type === TileType.Sprite || drawing.type === TileType.Item ) {
 
 		document.getElementById("dialogEditorHasContent").style.display = "block";
 		document.getElementById("dialogEditorNoContent").style.display = "none";
@@ -1381,16 +1260,16 @@ function reloadAdvDialogUI() {
 
 function reloadSprite() {
 	// animation UI
-	if ( sprite[drawingId] && sprite[drawingId].animation.isAnimated ) {
-		isCurDrawingAnimated = true;
+	if ( sprite[drawing.id] && sprite[drawing.id].animation.isAnimated ) {
+		paintTool.isCurDrawingAnimated = true;
 		document.getElementById("animatedCheckbox").checked = true;
 
-		if( curDrawingFrameIndex == 0)
+		if( paintTool.curDrawingFrameIndex == 0)
 		{
 			document.getElementById("animationKeyframe1").className = "animationThumbnail left selected";
 			document.getElementById("animationKeyframe2").className = "animationThumbnail right unselected";
 		}
-		else if( curDrawingFrameIndex == 1 )
+		else if( paintTool.curDrawingFrameIndex == 1 )
 		{
 			document.getElementById("animationKeyframe1").className = "animationThumbnail left unselected";
 			document.getElementById("animationKeyframe2").className = "animationThumbnail right selected";
@@ -1398,10 +1277,10 @@ function reloadSprite() {
 
 		document.getElementById("animation").setAttribute("style","display:block;");
 		document.getElementById("animatedCheckboxIcon").innerHTML = "expand_more";
-		renderAnimationPreview( drawingId );
+		renderAnimationPreview( drawing.id );
 	}
 	else {
-		isCurDrawingAnimated = false;
+		paintTool.isCurDrawingAnimated = false;
 		document.getElementById("animatedCheckbox").checked = false;
 		document.getElementById("animation").setAttribute("style","display:none;");
 		document.getElementById("animatedCheckboxIcon").innerHTML = "expand_less";
@@ -1410,26 +1289,26 @@ function reloadSprite() {
 	// dialog UI
 	reloadDialogUI()
 
-	updateDrawingNameUI(false);
+	updateDrawingNameUI( drawing.id != "A" );
 
 	// update paint canvas
-	drawPaintCanvas();
+	paintTool.updateCanvas();
 
 }
 
 // TODO consolidate these drawing related methods
 function reloadItem() {
 	// animation UI
-	if ( item[drawingId] && item[drawingId].animation.isAnimated ) {
-		isCurDrawingAnimated = true;
+	if ( item[drawing.id] && item[drawing.id].animation.isAnimated ) {
+		paintTool.isCurDrawingAnimated = true;
 		document.getElementById("animatedCheckbox").checked = true;
 
-		if( curDrawingFrameIndex == 0)
+		if( paintTool.curDrawingFrameIndex == 0)
 		{
 			document.getElementById("animationKeyframe1").className = "animationThumbnail left selected";
 			document.getElementById("animationKeyframe2").className = "animationThumbnail right unselected";
 		}
-		else if( curDrawingFrameIndex == 1 )
+		else if( paintTool.curDrawingFrameIndex == 1 )
 		{
 			document.getElementById("animationKeyframe1").className = "animationThumbnail left unselected";
 			document.getElementById("animationKeyframe2").className = "animationThumbnail right selected";
@@ -1437,10 +1316,10 @@ function reloadItem() {
 
 		document.getElementById("animation").setAttribute("style","display:block;");
 		document.getElementById("animatedCheckboxIcon").innerHTML = "expand_more";
-		renderAnimationPreview( drawingId );
+		renderAnimationPreview( drawing.id );
 	}
 	else {
-		isCurDrawingAnimated = false;
+		paintTool.isCurDrawingAnimated = false;
 		document.getElementById("animatedCheckbox").checked = false;
 		document.getElementById("animation").setAttribute("style","display:none;");
 		document.getElementById("animatedCheckboxIcon").innerHTML = "expand_less";
@@ -1452,574 +1331,17 @@ function reloadItem() {
 	updateDrawingNameUI(true);
 
 	// update paint canvas
-	drawPaintCanvas();
+	paintTool.updateCanvas();
 
 }
 
-/* UNIQUE ID METHODS */ // TODO - lots of duplicated code around stuff (ex: all these things with IDs)
-function nextTileId() {
-	return nextObjectId( sortedTileIdList() );
-}
-
-function nextSpriteId() {
-	return nextObjectId( sortedSpriteIdList() );
-}
-
-function nextItemId() {
-	return nextObjectId( sortedItemIdList() );
-}
-
-function nextRoomId() {
-	return nextObjectId( sortedRoomIdList() );
-}
-
-function nextEndingId() {
-	return nextObjectId( sortedEndingIdList() );
-}
-
-function nextPaletteId() {
-	return nextObjectId( sortedPaletteIdList() );
-}
-
-function nextObjectId(idList) {
-	var lastId = idList[ idList.length - 1 ];
-	var idInt = parseInt( lastId, 36 );
-	idInt++;
-	return idInt.toString(36);
-}
-
-function sortedTileIdList() {
-	return sortedBase36IdList( tile );
-}
-
-function sortedSpriteIdList() {
-	return sortedBase36IdList( sprite );
-}
-
-function sortedItemIdList() {
-	return sortedBase36IdList( item );
-}
-
-function sortedRoomIdList() {
-	return sortedBase36IdList( room );
-}
-
-function sortedEndingIdList() {
-	return sortedBase36IdList( ending );
-}
-
-function sortedPaletteIdList() {
-	return sortedBase36IdList( palette );
-}
-
-function sortedBase36IdList( objHolder ) {
-	return Object.keys( objHolder ).sort( function(a,b) { return parseInt(a,36) - parseInt(b,36); } );
-}
-
-var isDragAddingTiles = false;
-var isDragDeletingTiles = false;
-var isDragMovingExit = false;
-var isDragMovingEnding = false;
-function map_onMouseDown(e) {
-	var off = getOffset(e);
-	var x = Math.floor( off.x / (tilesize*scale) );
-	var y = Math.floor( off.y / (tilesize*scale) );
-	// console.log(x + " " + y);
-
-	var didSelectedExitChange = areExitsVisible ? setSelectedExit( getExit(curRoom,x,y) ) : false;
-	var didSelectedEndingChange = areEndingsVisible ? setSelectedEnding( getEnding(curRoom,x,y) ) : false;
-
-	if (didSelectedExitChange || didSelectedEndingChange) {
-		//don't do anything else
-		if( selectedExit != null ) isDragMovingExit = true;
-		if( selectedEndingTile != null ) isDragMovingEnding = true;
-	}
-	else if (isAddingExit) { //todo - mutually exclusive with adding an ending?
-		//add exit
-		if ( getEnding(curRoom,x,y) == null && getExit(curRoom,x,y) == null ) {
-			addExitToCurRoom(x,y);
-		}
-	}
-	else if (isAddingEnding) {
-		//add ending
-		if ( getEnding(curRoom,x,y) == null && getExit(curRoom,x,y) == null ) {
-			addEndingToCurRoom(x,y);
-		}
-	}
-	else if (drawingId != null) {
-		//add tiles/sprites to map
-		console.log("DRAWING");
-		if (paintMode == TileType.Tile) {
-			if ( room[curRoom].tilemap[y][x] === "0" ) {
-				console.log("ADD");
-				//add
-				//row = row.substr(0, x) + drawingId + row.substr(x+1);
-				console.log( room[curRoom].tilemap );
-				room[curRoom].tilemap[y][x] = drawingId;
-				isDragAddingTiles = true;
-			}
-			else {
-				//delete (better way to do this?)
-				//row = row.substr(0, x) + "0" + row.substr(x+1);
-				room[curRoom].tilemap[y][x] = "0";
-				isDragDeletingTiles = true;
-			}
-			//room[curRoom].tilemap[y] = row;
-		}
-		else if( paintMode == TileType.Avatar || paintMode == TileType.Sprite ) {
-			var otherSprite = getSpriteAt(x,y);
-			var isThisSpriteAlreadyHere = sprite[drawingId].room === curRoom &&
-										sprite[drawingId].x === x &&
-										sprite[drawingId].y === y;
-
-			if (otherSprite) {
-				//remove other sprite from map
-				sprite[otherSprite].room = null;
-				sprite[otherSprite].x = -1;
-				sprite[otherSprite].y = -1;
-			}
-
-			if (!isThisSpriteAlreadyHere) {
-				//add sprite to map
-				sprite[drawingId].room = curRoom;
-				sprite[drawingId].x = x;
-				sprite[drawingId].y = y;
-				//row = row.substr(0, x) + "0" + row.substr(x+1); //is this necessary? no
-			}
-			else {
-				//remove sprite from map
-				sprite[drawingId].room = null;
-				sprite[drawingId].x = -1;
-				sprite[drawingId].y = -1;
-			}
-		}
-		else if( paintMode == TileType.Item ) {
-			// TODO : is this the final behavior I want?
-
-			var otherItem = getItem(curRoom,x,y);
-			var isThisItemAlreadyHere = otherItem != null && otherItem.id === drawingId;
-
-			if(otherItem) {
-				getRoom().items.splice( getRoom().items.indexOf(otherItem), 1 );
-			}
-
-			if(!isThisItemAlreadyHere) {
-				getRoom().items.push( {id:drawingId, x:x, y:y} );
-			}
-		}
-		refreshGameData();
-		drawEditMap();
-	}
-}
-
-function editTilesOnDrag(e) {
-	var off = getOffset(e);
-	var x = Math.floor(off.x / (tilesize*scale));
-	var y = Math.floor(off.y / (tilesize*scale));
-	// var row = room[curRoom].tilemap[y];
-	if (isDragAddingTiles) {
-		if ( room[curRoom].tilemap[y][x] != drawingId ) {
-			// row = row.substr(0, x) + drawingId + row.substr(x+1);
-			// room[curRoom].tilemap[y] = row;
-			room[curRoom].tilemap[y][x] = drawingId;
-			refreshGameData();
-			drawEditMap();
-		}
-	}
-	else if (isDragDeletingTiles) {
-		if ( room[curRoom].tilemap[y][x] != "0" ) {
-			// row = row.substr(0, x) + "0" + row.substr(x+1);
-			// room[curRoom].tilemap[y] = row;
-			room[curRoom].tilemap[y][x] = "0";
-			refreshGameData();
-			drawEditMap();
-		}
-	}
-}
-
-function map_onMouseMove(e) {
-	if( selectedExit != null && isDragMovingExit )
-	{
-		// drag exit around
-		var off = getOffset(e);
-		var x = Math.floor(off.x / (tilesize*scale));
-		var y = Math.floor(off.y / (tilesize*scale));
-		if( !getExit(curRoom,x,y) && !getEnding(curRoom,x,y) )
-		{
-			selectedExit.x = x;
-			selectedExit.y = y;
-			refreshGameData();
-			drawEditMap();	
-		}
-	}
-	else if( selectedEndingTile != null && isDragMovingEnding )
-	{
-		// drag ending around
-		var off = getOffset(e);
-		var x = Math.floor(off.x / (tilesize*scale));
-		var y = Math.floor(off.y / (tilesize*scale));
-		var y = Math.floor(off.y / (tilesize*scale));
-		if( !getExit(curRoom,x,y) && !getEnding(curRoom,x,y) )
-		{
-			selectedEndingTile.x = x;
-			selectedEndingTile.y = y;
-			refreshGameData();
-			drawEditMap();	
-		}
-	}
-	else
-		editTilesOnDrag(e);
-}
-
-function map_onMouseUp(e) {
-	editTilesOnDrag(e);
-	isDragAddingTiles = false;
-	isDragDeletingTiles = false;
-	isDragMovingExit = false;
-	isDragMovingEnding = false;
-}
-
-function paint_onMouseDown(e) {
-	if (isPlayMode) return; //can't paint during play mode
-
-	var off = getOffset(e);
-	var x = Math.floor(off.x / paint_scale);
-	var y = Math.floor(off.y / paint_scale);
-	if (curDrawingData()[y][x] == 0) {
-		curPaintBrush = 1;
-	}
-	else {
-		curPaintBrush = 0;
-	}
-	curDrawingData()[y][x] = curPaintBrush;
-	drawPaintCanvas();
-	isPainting = true;
-}
-
-function paint_onMouseMove(e) {
-	if (isPainting) {	
-		var off = getOffset(e);
-		var x = Math.floor(off.x / paint_scale);
-		var y = Math.floor(off.y / paint_scale);
-		curDrawingData()[y][x] = curPaintBrush;
-		drawPaintCanvas();
-	}
-}
-
-function paint_onMouseUp(e) {
-	if (isPainting) {
-		isPainting = false;
-		renderImages();
-		refreshGameData();
-		drawEditMap();
-		renderPaintThumbnail( drawingId );
-		if( isCurDrawingAnimated )
-			renderAnimationPreview( drawingId );
-	}
-}
-
-function drawPaintCanvas() {
-	//background
-	paint_ctx.fillStyle = "rgb("+getPal(curPal())[0][0]+","+getPal(curPal())[0][1]+","+getPal(curPal())[0][2]+")";
-	paint_ctx.fillRect(0,0,canvas.width,canvas.height);
-
-	//pixel color
-	if (paintMode == TileType.Tile) {
-		paint_ctx.fillStyle = "rgb("+getPal(curPal())[1][0]+","+getPal(curPal())[1][1]+","+getPal(curPal())[1][2]+")";
-	}
-	else if (paintMode == TileType.Sprite || paintMode == TileType.Avatar || paintMode == TileType.Item) {
-		paint_ctx.fillStyle = "rgb("+getPal(curPal())[2][0]+","+getPal(curPal())[2][1]+","+getPal(curPal())[2][2]+")";
-	}
-
-	//draw pixels
-	for (var x = 0; x < 8; x++) {
-		for (var y = 0; y < 8; y++) {
-			// draw alternate frame
-			if (isCurDrawingAnimated && curDrawingAltFrameData()[y][x] === 1) {
-				paint_ctx.globalAlpha = 0.3;
-				paint_ctx.fillRect(x*paint_scale,y*paint_scale,1*paint_scale,1*paint_scale);
-				paint_ctx.globalAlpha = 1;
-			}
-			// draw current frame
-			if (curDrawingData()[y][x] === 1) {
-				paint_ctx.fillRect(x*paint_scale,y*paint_scale,1*paint_scale,1*paint_scale);
-			}
-		}
-	}
-
-	//draw grid
-	if (drawPaintGrid) {
-		paint_ctx.fillStyle = getContrastingColor();
-
-		for (var x = 1; x < tilesize; x++) {
-			paint_ctx.fillRect(x*paint_scale,0*paint_scale,1,tilesize*paint_scale);
-		}
-		for (var y = 1; y < tilesize; y++) {
-			paint_ctx.fillRect(0*paint_scale,y*paint_scale,tilesize*paint_scale,1);
-		}
-	}
-}
-
-function drawEditMap() {
-	//clear screen
-	ctx.fillStyle = "rgb("+getPal(curPal())[0][0]+","+getPal(curPal())[0][1]+","+getPal(curPal())[0][2]+")";
-	ctx.fillRect(0,0,canvas.width,canvas.height);
-
-	//draw map
-	drawRoom( room[curRoom] );
-
-	//draw grid
-	if (drawMapGrid) {
-		ctx.fillStyle = getContrastingColor();
-		for (var x = 1; x < mapsize; x++) {
-			ctx.fillRect(x*tilesize*scale,0*tilesize*scale,1,mapsize*tilesize*scale);
-		}
-		for (var y = 1; y < mapsize; y++) {
-			ctx.fillRect(0*tilesize*scale,y*tilesize*scale,mapsize*tilesize*scale,1);
-		}
-	}
-
-	//draw walls
-	if (drawCollisionMap) {
-		ctx.fillStyle = getContrastingColor();
-		for (i in room[curRoom].tilemap) {
-			for (j in room[curRoom].tilemap[i]) {
-				var id = room[curRoom].tilemap[i][j];
-				if ( room[curRoom].walls.indexOf(id) != -1 ) {
-					ctx.fillRect(j*tilesize*scale,i*tilesize*scale,tilesize*scale,tilesize*scale);
-				}
-			}
-		}
-	}
-
-	//draw exits (and entrances)
-	if (areExitsVisible) {
-		for( r in room ) {
-			if( r === curRoom ) {
-				for (i in room[curRoom].exits) {
-					var e = room[curRoom].exits[i];
-					if( !room[e.dest.room] )
-						continue;
-
-					if (e == selectedExit) {
-						ctx.fillStyle = "#ff0";
-						ctx.globalAlpha = 0.9;
-					}
-					else {
-						ctx.fillStyle = getContrastingColor();
-						ctx.globalAlpha = 0.5;
-					}
-					ctx.fillRect(e.x * tilesize * scale, e.y * tilesize * scale, tilesize * scale, tilesize * scale);
-					ctx.strokeStyle = getComplimentingColor();
-					ctx.globalAlpha = 1.0;
-					ctx.strokeRect( (e.x * tilesize * scale) - 1, (e.y * tilesize * scale) - 1, (tilesize * scale) + 2, (tilesize * scale) + 2 );
-
-					ctx.font = '14px sans-serif';
-					var roomStr = "To " + ( (room[e.dest.room].name != null) ? room[e.dest.room].name : ("room " + e.dest.room) );
-					ctx.fillText( roomStr, (e.x * tilesize * scale) - 1, (e.y * tilesize * scale) - 5 );
-
-					//todo (tilesize*scale) should be a function
-				}
-			}
-			else {
-				for (i in room[r].exits) {
-					var e = room[r].exits[i];
-					if( !room[e.dest.room] )
-						continue;
-
-					if (e.dest.room === curRoom){
-						ctx.fillStyle = getContrastingColor();
-						ctx.globalAlpha = 0.3;
-						ctx.fillRect(e.dest.x * tilesize * scale, e.dest.y * tilesize * scale, tilesize * scale, tilesize * scale);
-						ctx.strokeStyle = getComplimentingColor();
-						ctx.globalAlpha = 0.6;
-						ctx.strokeRect( (e.dest.x * tilesize * scale) - 1, (e.dest.y * tilesize * scale) - 1, (tilesize * scale) + 2, (tilesize * scale) + 2 );
-	
-						ctx.font = '14px sans-serif';
-						var roomStr = "From " + ( (room[r].name != null) ? room[r].name : ("room " + r) );
-						ctx.fillText( roomStr, (e.dest.x * tilesize * scale) - 1, (e.dest.y * tilesize * scale) - 5 );
-					}
-				}
-			}
-		}
-		ctx.globalAlpha = 1;
-	}
-
-	//draw endings
-	if (areEndingsVisible) {
-		for (i in room[curRoom].endings) {
-			var e = room[curRoom].endings[i];
-			if (e == selectedEndingTile) {
-				ctx.fillStyle = "#ff0";
-				ctx.globalAlpha = 0.9;
-			}
-			else {
-				ctx.fillStyle = getContrastingColor();
-				ctx.globalAlpha = 0.5;
-			}
-			ctx.fillRect(e.x * tilesize * scale, e.y * tilesize * scale, tilesize * scale, tilesize * scale);
-			ctx.strokeStyle = getComplimentingColor();
-			ctx.globalAlpha = 1.0;
-			ctx.strokeRect( (e.x * tilesize * scale) - 1, (e.y * tilesize * scale) - 1, (tilesize * scale) + 2, (tilesize * scale) + 2 );
-
-			ctx.font = '14px sans-serif';
-			ctx.fillText( "To ending " + e.id, (e.x * tilesize * scale) - 1, (e.y * tilesize * scale) - 5 );
-		}
-		ctx.globalAlpha = 1;
-	}
-}
-
-function curDrawingImgId() {
-	var imgId = "";
-	if( paintMode == TileType.Tile )
-		imgId += "TIL_";
-	else if( paintMode == TileType.Sprite || paintMode == TileType.Avatar )
-		imgId += "SPR_";
-	else if( paintMode == TileType.Item )
-		imgId += "ITM_";
-	imgId += drawingId;
-	return imgId;
-}
-
-function curDrawingData() {
-	var imgId = curDrawingImgId();
-	// console.log(imgId);
-	var frameIndex = (isCurDrawingAnimated ? curDrawingFrameIndex : 0);
-	// console.log(imageStore.source[ imgId ]);
-	return imageStore.source[ imgId ][ frameIndex ];
-}
-
-// todo: assumes 2 frames
-function curDrawingAltFrameData() {
-	var imgId = curDrawingImgId();
-	var frameIndex = (curDrawingFrameIndex === 0 ? 1 : 0);
-	return imageStore.source[ imgId ][ frameIndex ];
-}
-
-function makeTile(id,imageData) {
-	var drwId = "TIL_" + id;
-	tile[id] = {
-		drw : drwId,
-		col : 1,
-		animation : { //todo
-			isAnimated : (!imageData) ? false : (imageData.length>1),
-			frameIndex : 0,
-			frameCount : (!imageData) ? 2 : imageData.length
-		},
-		name : null
-	};
-	makeDrawing(drwId,imageData);
-}
-
-function makeSprite(id,imageData) {
-	var drwId = "SPR_" + id;
-	sprite[id] = { //todo create default sprite creation method
-		drw : drwId,
-		col : 2,
-		room : null,
-		x : -1,
-		y : -1,
-		animation : { //todo
-			isAnimated : (!imageData) ? false : (imageData.length>1), // more duplication :(
-			frameIndex : 0,
-			frameCount : (!imageData) ? 2 : imageData.length
-		},
-		dlg : null,
-		name : null
-	};
-	makeDrawing(drwId,imageData);
-}
-
-function makeItem(id,imageData) {
-	var drwId = "ITM_" + id;
-	item[id] = { //todo create default item creation method
-		drw : drwId,
-		col : 2,
-		animation : { //todo
-			isAnimated : (!imageData) ? false : (imageData.length>1), // more duplication :(
-			frameIndex : 0,
-			frameCount : (!imageData) ? 2 : imageData.length
-		},
-		dlg : null,
-		name : null
-	};
-	makeDrawing(drwId,imageData);
-}
-
-function makeItem(id,imageData) { // NOTE : same as tile right now? make more like sprite?
-	console.log(id);
-	var drwId = "ITM_" + id;
-	console.log(drwId);
-	item[id] = {
-		drw : drwId,
-		col : 2, // TODO color not column (bad name)
-		animation : { //todo
-			isAnimated : (!imageData) ? false : (imageData.length>1), // more duplication :(
-			frameIndex : 0,
-			frameCount : (!imageData) ? 2 : imageData.length
-		}
-	};
-	makeDrawing(drwId,imageData);
-}
-
-function makeDrawing(id,imageData) {
-	if (!imageData) {
-		imageData = [[
-			[0,0,0,0,0,0,0,0],
-			[0,0,0,0,0,0,0,0],
-			[0,0,0,0,0,0,0,0],
-			[0,0,0,0,0,0,0,0],
-			[0,0,0,0,0,0,0,0],
-			[0,0,0,0,0,0,0,0],
-			[0,0,0,0,0,0,0,0],
-			[0,0,0,0,0,0,0,0]
-		]];
-	}
-	imageStore.source[id] = imageData;
-	renderImages(); //todo is this the right place for this?
-}
-
-function newGameDialog() {
-	if ( confirm("Starting a new game will erase your old data. Consider exporting your work first! Are you sure you want to start over?") ) {
-		resetGameData();
-	}
-}
-
-function resetGameData() {
-	setDefaultGameState();
-
-	// todo wrap these variable resets in a function
-	tileIndex = 0;
-	spriteIndex = 0;
-
-	refreshGameData();
-	renderImages();
-	drawPaintCanvas();
-	drawEditMap();
-	updatePaletteUI();
-	// updatePaletteControlsFromGameData();
-	updateExitOptionsFromGameData();
-	updateRoomName();
-	updateInventoryUI();
-
-	on_paint_avatar();
-	document.getElementById('paintOptionAvatar').checked = true;
-}
-
-function refreshGameData() {
-	if (isPlayMode) return; //never store game data while in playmode (TODO: wouldn't be necessary if the game data was decoupled form editor data)
-
-	flags.ROOM_FORMAT = 1; // always save out comma separated format, even if the old format is read in
-	var gameData = serializeWorld();
-	//console.log("refresh!");
-	//console.log(gameData);
-	document.getElementById("game_data").value = gameData;
-	localStorage.setItem("game_data", gameData); //auto-save
+function deleteDrawing() {
+	paintTool.deleteDrawing();
 }
 
 function toggleToolBar(e) {
 	if( e.target.checked ) {
-		document.getElementById("toolsPanel").style.display = "block";
+		document.getElementById("toolsPanel").style.display = "flex";
 		document.getElementById("toolsCheckIcon").innerHTML = "expand_more";
 	}
 	else {
@@ -2071,24 +1393,15 @@ function toggleDownloadOptions(e) {
 	}
 }
 
-function togglePlayMode(e) {
-	if (e.target.checked) {
-		on_play_mode();
-	}
-	else {
-		on_edit_mode();
-	}
-	updatePlayModeButton();
-}
-
 function on_edit_mode() {
 	isPlayMode = false;
 	stopGame();
 	// TODO I should really do more to separate the editor's game-data from the engine's game-data
 	parseWorld(document.getElementById("game_data").value); //reparse world to account for any changes during gameplay
 	curRoom = sortedRoomIdList()[roomIndex]; //restore current room to pre-play state
-	drawEditMap();
-	listenMapEditEvents();
+	roomTool.drawEditMap();
+
+	roomTool.listenEditEvents();
 
 	updateInventoryUI();
 
@@ -2103,10 +1416,19 @@ function on_edit_mode() {
 	document.getElementById("previewDialogCheck").disabled = false;
 }
 
+// hacky - part of hiding font data from the game data
+function getFullGameData() {
+	// return document.getElementById("game_data").value + fontManager.GetData(fontName);
+	return serializeWorld();
+}
+
 function on_play_mode() {
 	isPlayMode = true;
-	unlistenMapEditEvents();
-	load_game(document.getElementById("game_data").value, !isPreviewDialogMode /* startWithTitle */);
+
+	roomTool.unlistenEditEvents();
+
+	// load_game(document.getElementById("game_data").value, !isPreviewDialogMode /* startWithTitle */);
+	load_game(getFullGameData(), !isPreviewDialogMode /* startWithTitle */);
 
 	console.log("PLAY!! ~~ PREVIEW ? " + isPreviewDialogMode);
 	if(!isPreviewDialogMode) {
@@ -2128,27 +1450,28 @@ function updatePreviewDialogButton() {
 }
 
 function togglePaintGrid(e) {
-	drawPaintGrid = e.target.checked;
-	document.getElementById("paintGridIcon").innerHTML = drawPaintGrid ? "visibility" : "visibility_off";
-	drawPaintCanvas();
+	paintTool.drawPaintGrid = e.target.checked;
+	document.getElementById("paintGridIcon").innerHTML = paintTool.drawPaintGrid ? "visibility" : "visibility_off";
+	paintTool.updateCanvas();
 }
 
 function toggleMapGrid(e) {
-	drawMapGrid = e.target.checked;
-	document.getElementById("roomGridIcon").innerHTML = drawMapGrid ? "visibility" : "visibility_off";
-	drawEditMap();
+	roomTool.drawMapGrid = e.target.checked;
+	document.getElementById("roomGridIcon").innerHTML = roomTool.drawMapGrid ? "visibility" : "visibility_off";
+	roomTool.drawEditMap();
 }
 
-var drawCollisionMap = false; //todo - move variable to more centeral spot?
 function toggleCollisionMap(e) {
-	drawCollisionMap = e.target.checked;
-	document.getElementById("roomWallsIcon").innerHTML = drawCollisionMap ? "visibility" : "visibility_off";
-	drawEditMap();
+	roomTool.drawCollisionMap = e.target.checked;
+	document.getElementById("roomWallsIcon").innerHTML = roomTool.drawCollisionMap ? "visibility" : "visibility_off";
+	roomTool.drawEditMap();
 }
 
-function on_change_title() {
-	title = document.getElementById("titleText").value;
-	refreshGameData();
+var showFontDataInGameData = false;
+function toggleFontDataVisibility(e) {
+	showFontDataInGameData = e.target.checked;
+	document.getElementById("fontDataIcon").innerHTML = e.target.checked ? "visibility" : "visibility_off";
+	refreshGameData(); // maybe a bit expensive
 }
 
 /* PALETTE STUFF */
@@ -2175,96 +1498,37 @@ function updatePaletteUI() {
 
 	updatePaletteOptionsFromGameData();
 	updatePaletteControlsFromGameData();
-	if (!browserFeatures.colorPicker) {
-		updatePaletteBorders();
-	}
 }
 
 function updateRoomPaletteSelect() {
 	var palOptions = document.getElementById("roomPaletteSelect").options;
 	for (i in palOptions) {
 		var o = palOptions[i];
-		console.log(o);
+		// console.log(o);
 		if (o.value === curPal()) {
 			o.selected = true;
 		}
 	}
 }
 
-function updatePaletteBorders() {
-	console.log("UPDATE PALETTE BORDERS");
-	//feature to show selected colors in browsers that don't support a color picker
-	document.getElementById("backgroundColor").style.border = "solid " + document.getElementById("backgroundColor").value + " 5px";
-	document.getElementById("tileColor").style.border = "solid " + document.getElementById("tileColor").value + " 5px";
-	document.getElementById("spriteColor").style.border = "solid " + document.getElementById("spriteColor").value + " 5px";
+var colorPicker = null; // new color picker
+var paletteTool = null;
+var paintExplorer = null;
+
+function changeColorPickerIndex(index) {
+	paletteTool.changeColorPickerIndex(index);
 }
 
-function on_change_color_bg() {
-	//color testing
-	// document.body.style.background = document.getElementById("backgroundColor").value;
-
-	var rgb = hexToRgb( document.getElementById("backgroundColor").value );
-	getPal(selectedColorPal())[0][0] = rgb.r;
-	getPal(selectedColorPal())[0][1] = rgb.g;
-	getPal(selectedColorPal())[0][2] = rgb.b;
+function onPaletteChange() {
 	refreshGameData();
-	renderImages();
-	drawPaintCanvas();
-	drawEditMap();
-	refreshPaintExplorer( true /*doKeepOldThumbnails*/ );
-	if( isCurDrawingAnimated )
-		renderAnimationPreview( drawingId );
 
-	if (!browserFeatures.colorPicker) {
-		updatePaletteBorders();
-	}
-}
+	renderer.SetPalettes(palette);
 
-function on_change_color_tile() {
-	//color testing
-	// var elements = document.getElementsByClassName("bar");
-	// for (var i = 0; i < elements.length; i++) {
-	// 	var el = elements[i];
-	// 	console.log(el);
-	// 	el.style.background = document.getElementById("tileColor").value;
-	// }
-
-	var rgb = hexToRgb( document.getElementById("tileColor").value );
-	getPal(selectedColorPal())[1][0] = rgb.r;
-	getPal(selectedColorPal())[1][1] = rgb.g;
-	getPal(selectedColorPal())[1][2] = rgb.b;
-	refreshGameData();
-	renderImages();
-	drawPaintCanvas();
-	drawEditMap();
-	refreshPaintExplorer( true /*doKeepOldThumbnails*/ );
-	if( isCurDrawingAnimated )
-		renderAnimationPreview( drawingId );
-
-	if (!browserFeatures.colorPicker) {
-		updatePaletteBorders();
-	}
-}
-
-function on_change_color_sprite() {
-	//color testing
-	// document.getElementById("topbar").style.background = document.getElementById("spriteColor").value;
-
-	var rgb = hexToRgb( document.getElementById("spriteColor").value );
-	getPal(selectedColorPal())[2][0] = rgb.r;
-	getPal(selectedColorPal())[2][1] = rgb.g;
-	getPal(selectedColorPal())[2][2] = rgb.b;
-	refreshGameData();
-	renderImages();
-	drawPaintCanvas();
-	drawEditMap();
-	refreshPaintExplorer( true /*doKeepOldThumbnails*/ );
-	if( isCurDrawingAnimated )
-		renderAnimationPreview( drawingId );
-
-	if (!browserFeatures.colorPicker) {
-		updatePaletteBorders();
-	}
+	paintTool.updateCanvas();
+	roomTool.drawEditMap();
+	paintExplorer.Refresh( paintTool.drawing.type, true /*doKeepOldThumbnails*/ );
+	if( paintTool.isCurDrawingAnimated )
+		renderAnimationPreview( drawing.id );
 }
 
 function updatePaletteOptionsFromGameData() {
@@ -2287,15 +1551,18 @@ function updatePaletteOptionsFromGameData() {
 }
 
 function updatePaletteControlsFromGameData() {
-	document.getElementById("backgroundColor").value = rgbToHex(getPal(selectedColorPal())[0][0], getPal(selectedColorPal())[0][1], getPal(selectedColorPal())[0][2]);
-	document.getElementById("tileColor").value = rgbToHex(getPal(selectedColorPal())[1][0], getPal(selectedColorPal())[1][1], getPal(selectedColorPal())[1][2]);
-	document.getElementById("spriteColor").value = rgbToHex(getPal(selectedColorPal())[2][0], getPal(selectedColorPal())[2][1], getPal(selectedColorPal())[2][2]);
+	// document.getElementById("backgroundColor").value = rgbToHex(getPal(selectedColorPal())[0][0], getPal(selectedColorPal())[0][1], getPal(selectedColorPal())[0][2]);
+	// document.getElementById("tileColor").value = rgbToHex(getPal(selectedColorPal())[1][0], getPal(selectedColorPal())[1][1], getPal(selectedColorPal())[1][2]);
+	// document.getElementById("spriteColor").value = rgbToHex(getPal(selectedColorPal())[2][0], getPal(selectedColorPal())[2][1], getPal(selectedColorPal())[2][2]);
+
+	if( colorPicker != null )
+		paletteTool.updateColorPickerUI();
 }
 
 function prevPalette() {
 	// update index
-	paletteIndex = (paletteIndex - 1);
-	if (paletteIndex < 0) paletteIndex = Object.keys(palette).length - 1;
+	Ed().paletteIndex = (Ed().paletteIndex - 1);
+	if (Ed().paletteIndex < 0) Ed().paletteIndex = Object.keys(palette).length - 1;
 
 	// change the UI
 	updatePaletteUI();
@@ -2303,8 +1570,8 @@ function prevPalette() {
 
 function nextPalette() {
 	// update index
-	paletteIndex = (paletteIndex + 1);
-	if (paletteIndex >= Object.keys(palette).length) paletteIndex = 0;
+	Ed().paletteIndex = (Ed().paletteIndex + 1);
+	if (Ed().paletteIndex >= Object.keys(palette).length) Ed().paletteIndex = 0;
 
 	// change the UI
 	updatePaletteUI();
@@ -2323,7 +1590,7 @@ function newPalette() {
 	refreshGameData();
 
 	// change the UI
-	paletteIndex = Object.keys(palette).length - 1;
+	Ed().paletteIndex = Object.keys(palette).length - 1;
 	updatePaletteUI();
 }
 
@@ -2331,50 +1598,36 @@ function roomPaletteChange(event) {
 	var palId = event.target.value;
 	room[curRoom].pal = palId;
 	refreshGameData();
-	drawEditMap();
-	drawPaintCanvas();
-	refreshPaintExplorer( true /*doKeepOldThumbnails*/ );
-}
-
-//hex-to-rgb method borrowed from stack overflow
-function hexToRgb(hex) {
-	// Expand shorthand form (e.g. "03F") to full form (e.g. "0033FF")
-	var shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
-	hex = hex.replace(shorthandRegex, function(m, r, g, b) {
-		return r + r + g + g + b + b;
-	});
-
-	var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-	return result ? {
-		r: parseInt(result[1], 16),
-		g: parseInt(result[2], 16),
-		b: parseInt(result[3], 16)
-	} : null;
-}
-function componentToHex(c) {
-    var hex = c.toString(16);
-    return hex.length == 1 ? "0" + hex : hex;
-}
-function rgbToHex(r, g, b) {
-    return "#" + componentToHex(r) + componentToHex(g) + componentToHex(b);
+	roomTool.drawEditMap();
+	paintTool.updateCanvas();
+	paintExplorer.Refresh( paintTool.drawing.type, true /*doKeepOldThumbnails*/ );
 }
 
 function updateDrawingNameUI(visible) {
 	document.getElementById("drawingNameUI").setAttribute("style", visible ? "display:initial;" : "display:none;");
-	var obj = getCurPaintObject();
+	var obj = paintTool.getCurObject();
 	console.log("update drawing name ui");
 	console.log(obj);
 	if( obj.name != null )
 		document.getElementById("drawingName").value = obj.name;
 	else
 		document.getElementById("drawingName").value = "";
-	document.getElementById("drawingName").placeholder = getCurPaintModeStr() + " " + drawingId;
+	document.getElementById("drawingName").placeholder = getCurPaintModeStr() + " " + drawing.id;
 }
 
 function on_paint_avatar() {
-	paintMode = TileType.Avatar;
-	drawingId = "A";
-	reloadSprite();
+	drawing.type = TileType.Avatar;
+	drawing.id = "A";
+	paintTool.reloadDrawing();
+	if(paintExplorer != null) { 
+		paintExplorer.Refresh( paintTool.drawing.type );
+		paintExplorer.ChangeSelection( paintTool.drawing.id );
+	}
+
+	on_paint_avatar_ui_update();
+}
+
+function on_paint_avatar_ui_update() {
 	document.getElementById("dialog").setAttribute("style","display:none;");
 	document.getElementById("wall").setAttribute("style","display:none;");
 	document.getElementById("paintNav").setAttribute("style","display:none;");
@@ -2382,36 +1635,45 @@ function on_paint_avatar() {
 	document.getElementById("animationOuter").setAttribute("style","display:block;");
 	updateDrawingNameUI(false);
 	//document.getElementById("animation").setAttribute("style","display:none;");
-	refreshPaintExplorer();
 	document.getElementById("paintOptionAvatar").checked = true;
 	document.getElementById("paintExplorerOptionAvatar").checked = true;
 	document.getElementById("showInventoryButton").setAttribute("style","display:none;");
 	document.getElementById("paintExplorerAdd").setAttribute("style","display:none;");
+	document.getElementById("paintExplorerFilterInput").value = "";
 
 	reloadAdvDialogUI();
 }
+
 function on_paint_tile() {
-	paintMode = TileType.Tile;
+	drawing.type = TileType.Tile;
 	tileIndex = 0;
-	drawingId = sortedTileIdList()[tileIndex];
-	reloadTile();
+	drawing.id = sortedTileIdList()[tileIndex];
+	paintTool.reloadDrawing();
+	paintExplorer.Refresh( paintTool.drawing.type );
+	paintExplorer.ChangeSelection( paintTool.drawing.id );
+
+	on_paint_tile_ui_update();
+}
+
+function on_paint_tile_ui_update() {
 	document.getElementById("dialog").setAttribute("style","display:none;");
 	document.getElementById("wall").setAttribute("style","display:block;");
 	document.getElementById("paintNav").setAttribute("style","display:inline-block;");
 	document.getElementById("paintCommands").setAttribute("style","display:inline-block;");
 	document.getElementById("animationOuter").setAttribute("style","display:block;");
-	updateDrawingNameUI(false);
+	updateDrawingNameUI(true);
 	//document.getElementById("animation").setAttribute("style","display:block;");
-	refreshPaintExplorer();
 	document.getElementById("paintOptionTile").checked = true;
 	document.getElementById("paintExplorerOptionTile").checked = true;
 	document.getElementById("showInventoryButton").setAttribute("style","display:none;");
 	document.getElementById("paintExplorerAdd").setAttribute("style","display:inline-block;");
+	document.getElementById("paintExplorerFilterInput").value = "";
 
 	reloadAdvDialogUI();
 }
+
 function on_paint_sprite() {
-	paintMode = TileType.Sprite;
+	drawing.type = TileType.Sprite;
 	if (sortedSpriteIdList().length > 1)
 	{
 		spriteIndex = 1;
@@ -2419,32 +1681,16 @@ function on_paint_sprite() {
 	else {
 		spriteIndex = 0; //fall back to avatar if no other sprites exist
 	}
-	drawingId = sortedSpriteIdList()[spriteIndex];
-	curDrawingFrameIndex = 0;
-	reloadSprite();
-	document.getElementById("dialog").setAttribute("style","display:block;");
-	document.getElementById("wall").setAttribute("style","display:none;");
-	document.getElementById("paintNav").setAttribute("style","display:inline-block;");
-	document.getElementById("paintCommands").setAttribute("style","display:inline-block;");
-	document.getElementById("animationOuter").setAttribute("style","display:block;");
-	updateDrawingNameUI(false);
-	//document.getElementById("animation").setAttribute("style","display:block;");
-	refreshPaintExplorer();
-	document.getElementById("paintOptionSprite").checked = true;
-	document.getElementById("paintExplorerOptionSprite").checked = true;
-	document.getElementById("showInventoryButton").setAttribute("style","display:none;");
-	document.getElementById("paintExplorerAdd").setAttribute("style","display:inline-block;");
+	drawing.id = sortedSpriteIdList()[spriteIndex];
+	paintTool.curDrawingFrameIndex = 0;
+	paintTool.reloadDrawing();
+	paintExplorer.Refresh( paintTool.drawing.type );
+	paintExplorer.ChangeSelection( paintTool.drawing.id );
 
-	reloadAdvDialogUI();
+	on_paint_sprite_ui_update();
 }
-function on_paint_item() {
-	console.log("PAINT ITEM");
-	paintMode = TileType.Item;
-	itemIndex = 0;
-	drawingId = sortedItemIdList()[itemIndex];
-	console.log(drawingId);
-	curDrawingFrameIndex = 0;
-	reloadItem();
+
+function on_paint_sprite_ui_update() {
 	document.getElementById("dialog").setAttribute("style","display:block;");
 	document.getElementById("wall").setAttribute("style","display:none;");
 	document.getElementById("paintNav").setAttribute("style","display:inline-block;");
@@ -2452,317 +1698,138 @@ function on_paint_item() {
 	document.getElementById("animationOuter").setAttribute("style","display:block;");
 	updateDrawingNameUI(true);
 	//document.getElementById("animation").setAttribute("style","display:block;");
-	refreshPaintExplorer();
+	document.getElementById("paintOptionSprite").checked = true;
+	document.getElementById("paintExplorerOptionSprite").checked = true;
+	document.getElementById("showInventoryButton").setAttribute("style","display:none;");
+	document.getElementById("paintExplorerAdd").setAttribute("style","display:inline-block;");
+	document.getElementById("paintExplorerFilterInput").value = "";
+
+	reloadAdvDialogUI();
+}
+
+function on_paint_item() {
+	console.log("PAINT ITEM");
+	drawing.type = TileType.Item;
+	itemIndex = 0;
+	drawing.id = sortedItemIdList()[itemIndex];
+	console.log(drawing.id);
+	paintTool.curDrawingFrameIndex = 0;
+	paintTool.reloadDrawing();
+	paintExplorer.Refresh( paintTool.drawing.type );
+	paintExplorer.ChangeSelection( paintTool.drawing.id );
+
+	on_paint_item_ui_update();
+}
+
+function on_paint_item_ui_update() {
+	document.getElementById("dialog").setAttribute("style","display:block;");
+	document.getElementById("wall").setAttribute("style","display:none;");
+	document.getElementById("paintNav").setAttribute("style","display:inline-block;");
+	document.getElementById("paintCommands").setAttribute("style","display:inline-block;");
+	document.getElementById("animationOuter").setAttribute("style","display:block;");
+	updateDrawingNameUI(true);
+	//document.getElementById("animation").setAttribute("style","display:block;");
 	document.getElementById("paintOptionItem").checked = true;
 	document.getElementById("paintExplorerOptionItem").checked = true;
 	document.getElementById("showInventoryButton").setAttribute("style","display:inline-block;");
 	document.getElementById("paintExplorerAdd").setAttribute("style","display:inline-block;");
+	document.getElementById("paintExplorerFilterInput").value = "";
 
 	reloadAdvDialogUI();
 }
 
-var drawingThumbnailCanvas, drawingThumbnailCtx;
-function refreshPaintExplorer( doKeepOldThumbnails = false ) {
-	var idList = [];
-	if( paintMode == TileType.Avatar ) {
-		idList = ["A"];
-	}
-	else if( paintMode == TileType.Sprite ) {
-		idList = sortedSpriteIdList();
-	}
-	else if ( paintMode == TileType.Tile ) {
-		idList = sortedTileIdList();
-	}
-	else if ( paintMode == TileType.Item ) {
-		idList = sortedItemIdList();
+function paintExplorerFilterChange( e ) {
+	console.log("paint explorer filter : " + e.target.value);
+	paintExplorer.Refresh( paintTool.drawing.type, true, e.target.value );
+}
+
+// ok to split up per-app functionality this way?
+function editDrawingAtCoordinate(x,y) {
+	// if(self.paintTool === null || self.paintExplorer === null)
+	// 	return;
+
+	// console.log("!!!");
+
+	console.log("ALT " + x + " " + y);
+
+	var spriteId = getSpriteAt(x,y); // todo: need more consistency with these methods
+	console.log(spriteId);
+	if(spriteId) {
+		if(spriteId === "A")
+			on_paint_avatar_ui_update();
+		else
+			on_paint_sprite_ui_update();
+
+		var drawing = new DrawingId( spriteId === "A" ? TileType.Avatar : TileType.Sprite, spriteId );
+		paintTool.selectDrawing( drawing );
+		paintExplorer.RefreshAndChangeSelection( drawing );
+		return;
 	}
 
-	var hexPalette = [];
-	for (id in palette) {
-		for (i in getPal(id)){
-			var hexStr = rgbToHex( getPal(id)[i][0], getPal(id)[i][1], getPal(id)[i][2] ).slice(1);
-			hexPalette.push( hexStr );
-		}
+	var item = getItem(curRoom,x,y);
+	console.log(item);
+	if(item) {
+		on_paint_item_ui_update();
+		var drawing = new DrawingId( TileType.Item, item.id );
+		paintTool.selectDrawing( drawing );
+		paintExplorer.RefreshAndChangeSelection( drawing );
+		return;
 	}
 
-	var paintExplorerForm = document.getElementById("paintExplorerFormInner");
-	if( !doKeepOldThumbnails )
-		paintExplorerForm.innerHTML = "";
-	
-	for(var i = 0; i < idList.length; i++) {
-		var id = idList[i];
-		if(id != "A" || paintMode == TileType.Avatar)
-		{
-			if( !doKeepOldThumbnails )
-				addPaintThumbnail( id ); // create thumbnail element and render thumbnail
-			else
-				renderPaintThumbnail( id ); // just re-render the thumbnail
-		}
+	var tileId = getTile(x,y);
+	console.log(tileId);
+	if(tileId != 0) {
+		on_paint_tile_ui_update(); // really wasteful probably
+		var drawing = new DrawingId( TileType.Tile, tileId );
+		paintTool.selectDrawing( drawing );
+		paintExplorer.RefreshAndChangeSelection( drawing );
+		return;
 	}
 }
 
-function addPaintThumbnail(id) {
-	var paintExplorerForm = document.getElementById("paintExplorerFormInner");
-
-	var radio = document.createElement("input");
-	radio.type = "radio";
-	radio.name = "paintExplorerRadio";
-	radio.id = "paintExplorerRadio_" + id;
-	radio.value = id;
-	radio.checked = id === drawingId;
-	paintExplorerForm.appendChild(radio);
-	var label = document.createElement("label");
-	label.htmlFor = "paintExplorerRadio_" + id;
-	label.id = "paintExplorerLabel_" + id;
-	var img = document.createElement("img");
-	img.id = "paintExplorerThumbnail_" + id;
-	if( paintMode === TileType.Tile )
-		img.title = tile[id].name ? tile[id].name : "tile " + id;
-	else if( paintMode === TileType.Sprite )
-		img.title = sprite[id].name ? sprite[id].name : "sprite " + id;
-	else if( paintMode === TileType.Avatar )
-		img.title = "player avatar";
-	else if( paintMode === TileType.Item )
-		img.title = item[id].name ? item[id].name : "item " + id;
-	label.appendChild(img);
-	paintExplorerForm.appendChild(label);
-
-	radio.onclick = selectPaint;
-	
-	renderPaintThumbnail( id );
-}
-
-var thumbnailRenderEncoders = {};
-function renderPaintThumbnail(id) {
-	var hexPalette = []; // TODO this is a bit repetitive to do all the time, huh?
-	for (pal in palette) {
-		for (i in getPal(pal)){
-			var hexStr = rgbToHex( getPal(pal)[i][0], getPal(pal)[i][1], getPal(pal)[i][2] ).slice(1);
-			hexPalette.push( hexStr );
-		}
-	}
-
-	// console.log(id);
-	var img = document.getElementById("paintExplorerThumbnail_" + id);
-
-	var drawingFrameData = [];
-	if( paintMode == TileType.Tile ) {
-		// console.log(tile[id]);
-		drawTile( getTileImage( tile[id], getRoomPal(curRoom), 0 ), 0, 0, drawingThumbnailCtx );
-		drawingFrameData.push( drawingThumbnailCtx.getImageData(0,0,8*scale,8*scale).data );
-		drawTile( getTileImage( tile[id], getRoomPal(curRoom), 1 ), 0, 0, drawingThumbnailCtx );
-		drawingFrameData.push( drawingThumbnailCtx.getImageData(0,0,8*scale,8*scale).data );
-	}
-	else if( paintMode == TileType.Sprite || paintMode == TileType.Avatar ){
-		// console.log(sprite[id]);
-		drawSprite( getSpriteImage( sprite[id], getRoomPal(curRoom), 0 ), 0, 0, drawingThumbnailCtx );
-		drawingFrameData.push( drawingThumbnailCtx.getImageData(0,0,8*scale,8*scale).data );
-		drawSprite( getSpriteImage( sprite[id], getRoomPal(curRoom), 1 ), 0, 0, drawingThumbnailCtx );
-		drawingFrameData.push( drawingThumbnailCtx.getImageData(0,0,8*scale,8*scale).data );
-	}
-	else if( paintMode == TileType.Item ) {
-		drawItem( getItemImage( item[id], getRoomPal(curRoom), 0 ), 0, 0, drawingThumbnailCtx );
-		drawingFrameData.push( drawingThumbnailCtx.getImageData(0,0,8*scale,8*scale).data );
-		drawItem( getItemImage( item[id], getRoomPal(curRoom), 1 ), 0, 0, drawingThumbnailCtx );
-		drawingFrameData.push( drawingThumbnailCtx.getImageData(0,0,8*scale,8*scale).data );
-	}
-
-	// create encoder
-	var gifData = {
-		frames: drawingFrameData,
-		width: 8*scale,
-		height: 8*scale,
-		palette: hexPalette,
-		loops: 0,
-		delay: animationTime / 10 // TODO why divide by 10???
-	};
-	var encoder = new gif();
-
-	// cancel old encoder (if in progress already)
-	if( thumbnailRenderEncoders[id] != null )
-		thumbnailRenderEncoders[id].cancel();
-	thumbnailRenderEncoders[id] = encoder;
-
-	// start encoding new GIF
-	encoder.encode( gifData, createThumbnailRenderCallback(img) );
-}
-
-var animationPreviewEncoders = {};
-function renderAnimationThumbnail(id,frameA,frameB,imgId) {
-	var hexPalette = []; // TODO this is a bit repetitive to do all the time, huh?
-	for (pal in palette) {
-		for (i in getPal(pal)){
-			var hexStr = rgbToHex( getPal(pal)[i][0], getPal(pal)[i][1], getPal(pal)[i][2] ).slice(1);
-			hexPalette.push( hexStr );
-		}
-	}
-
-	console.log(imgId);
-	var img = document.getElementById(imgId);
-	console.log(img);
-
-	var drawingFrameData = [];
-	if( paintMode == TileType.Tile ) {
-		// console.log(tile[id]);
-		// console.log("RENDER ANIM " + frameA + " " + frameB);
-		drawTile( getTileImage( tile[id], getRoomPal(curRoom), frameA ), 0, 0, drawingThumbnailCtx );
-		drawingFrameData.push( drawingThumbnailCtx.getImageData(0,0,8*scale,8*scale).data );
-		drawTile( getTileImage( tile[id], getRoomPal(curRoom), frameB ), 0, 0, drawingThumbnailCtx );
-		drawingFrameData.push( drawingThumbnailCtx.getImageData(0,0,8*scale,8*scale).data );
-	}
-	else if( paintMode == TileType.Avatar || paintMode == TileType.Sprite ) {
-		// console.log(sprite[id]);
-		drawSprite( getSpriteImage( sprite[id], getRoomPal(curRoom), frameA ), 0, 0, drawingThumbnailCtx );
-		drawingFrameData.push( drawingThumbnailCtx.getImageData(0,0,8*scale,8*scale).data );
-		drawSprite( getSpriteImage( sprite[id], getRoomPal(curRoom), frameB ), 0, 0, drawingThumbnailCtx );
-		drawingFrameData.push( drawingThumbnailCtx.getImageData(0,0,8*scale,8*scale).data );
-	}
-	else if( paintMode == TileType.Item ) {
-		drawItem( getItemImage( item[id], getRoomPal(curRoom), frameA ), 0, 0, drawingThumbnailCtx );
-		drawingFrameData.push( drawingThumbnailCtx.getImageData(0,0,8*scale,8*scale).data );
-		drawItem( getItemImage( item[id], getRoomPal(curRoom), frameB ), 0, 0, drawingThumbnailCtx );
-		drawingFrameData.push( drawingThumbnailCtx.getImageData(0,0,8*scale,8*scale).data );
-	}
-
-	// create encoder
-	var gifData = {
-		frames: drawingFrameData,
-		width: 8*scale,
-		height: 8*scale,
-		palette: hexPalette,
-		loops: 0,
-		delay: animationTime / 10 // TODO why divide by 10???
-	};
-	var encoder = new gif();
-
-	// cancel old encoder (if in progress already)
-	if( animationPreviewEncoders[imgId] != null )
-		animationPreviewEncoders[imgId].cancel();
-	animationPreviewEncoders[imgId] = encoder;
-
-	// start encoding new GIF
-	encoder.encode( gifData, createThumbnailRenderCallback(img) );
+var animationThumbnailRenderer = new ThumbnailRenderer();
+function renderAnimationThumbnail(imgId,id,frameIndex) {
+	var drawingId = new DrawingId(drawing.type,id); // HACK!!! - need consistency on how type + id should be coupled
+	animationThumbnailRenderer.Render(imgId,drawingId,frameIndex);
 }
 
 function renderAnimationPreview(id) {
 	// console.log("RENDRE ANIM PREVIW");
-	renderAnimationThumbnail( id, 0, 1, "animationThumbnailPreview" );
-	renderAnimationThumbnail( id, 0, 0, "animationThumbnailFrame1" );
-	renderAnimationThumbnail( id, 1, 1, "animationThumbnailFrame2" );
-}
-
-function createThumbnailRenderCallback(img) {
-	return function(uri) { img.src = uri; img.style.background = "none"; };
+	renderAnimationThumbnail( "animationThumbnailPreview", id );
+	renderAnimationThumbnail( "animationThumbnailFrame1", id, 0 );
+	renderAnimationThumbnail( "animationThumbnailFrame2", id, 1 );
 }
 
 function selectPaint() {
-	if(drawingId === this.value && document.getElementById("paintPanel").style.display === "none") {
+	if(drawing.id === this.value && document.getElementById("paintPanel").style.display === "none") {
 		togglePanelCore("paintPanel", true /*visible*/); // animate?
 	}
 
-	drawingId = this.value;
-	if( paintMode === TileType.Tile ) {
-		tileIndex = sortedTileIdList().indexOf( drawingId );
-		reloadTile();
+	drawing.id = this.value;
+	if( drawing.type === TileType.Tile ) {
+		tileIndex = sortedTileIdList().indexOf( drawing.id );
+		paintTool.reloadDrawing();
+	}
+	else if( drawing.type === TileType.Item ) {
+		itemIndex = sortedItemIdList().indexOf( drawing.id );
+		paintTool.reloadDrawing();
 	}
 	else {
-		spriteIndex = sortedSpriteIdList().indexOf( drawingId );
-		reloadSprite();
-	}
-}
-
-function changePaintExplorerSelection(id) {
-	var paintExplorerForm = document.getElementById("paintExplorerFormInner");
-	for( var i = 0; i < paintExplorerForm.childNodes.length; i++ ) {
-		var child = paintExplorerForm.childNodes[i];
-		if( child.type && child.type === "radio" ) {
-			if( child.id === "paintExplorerRadio_" + id )
-				child.checked = true;
-			else
-				child.checked = false;
-		}
-	}
-}
-
-function deletePaintThumbnail(id) {
-	var paintExplorerForm = document.getElementById("paintExplorerFormInner");
-	paintExplorerForm.removeChild( document.getElementById( "paintExplorerRadio_" + id ) );
-	paintExplorerForm.removeChild( document.getElementById( "paintExplorerLabel_" + id ) );
-}
-
-function getCurDialogId() {
-	var dialogId = null;
-	if(paintMode == TileType.Sprite) {
-		dialogId = sprite[drawingId].dlg;
-		if(dialogId == null && dialog[drawingId] != null) {
-			dialogId = drawingId;
-		}
-	}
-	else if(paintMode == TileType.Item) {
-		dialogId = item[drawingId].dlg;
-	}
-	console.log("DIALOG ID " + dialogId);
-	return dialogId;
-}
-
-function getCurPaintObject() {
-	console.log(drawingId);
-	if(paintMode == TileType.Sprite || paintMode == TileType.Avatar) {
-		return sprite[drawingId];
-	}
-	else if(paintMode == TileType.Item) {
-		return item[drawingId];
-	}
-	else if(paintMode == TileType.Tile) {
-		return tile[drawingId];
+		spriteIndex = sortedSpriteIdList().indexOf( drawing.id );
+		paintTool.reloadDrawing();
 	}
 }
 
 function getCurPaintModeStr() {
-	if(paintMode == TileType.Sprite || paintMode == TileType.Avatar) {
-		return "sprite";
+	if(drawing.type == TileType.Sprite || drawing.type == TileType.Avatar) {
+		return localization.GetStringOrFallback("sprite_label", "sprite");
 	}
-	else if(paintMode == TileType.Item) {
-		return "item";
+	else if(drawing.type == TileType.Item) {
+		return localization.GetStringOrFallback("item_label", "item");
 	}
-	else if(paintMode == TileType.Tile) {
-		return "tile";
+	else if(drawing.type == TileType.Tile) {
+		return localization.GetStringOrFallback("tile_label", "tile");
 	}
-}
-
-function nextAvailableDialogId(prefix = "") {
-	var i = 0;
-	var id = prefix + i.toString(36);
-	while( dialog[id] != null ) {
-		i++;
-		id = prefix + i.toString(36);
-	}
-	return id;
-}
-
-function on_change_dialog() {
-	var dialogId = getCurDialogId();
-
-	var dialogStr = document.getElementById("dialogText").value;
-	if(dialogStr.length <= 0){
-		if(dialogId) {
-			getCurPaintObject().dlg = null;
-			delete dialog[dialogId];
-		}
-	}
-	else {
-		if(!dialogId) {
-			var prefix = (paintMode == TileType.Item) ? "ITM_" : "SPR_";
-			dialogId = nextAvailableDialogId( prefix );
-			getCurPaintObject().dlg = dialogId;
-		}
-		if( dialogStr.indexOf('\n') > -1 ) dialogStr = '"""\n' + dialogStr + '\n"""';
-		dialog[dialogId] = dialogStr;
-	}
-
-	reloadAdvDialogUI();
-
-	refreshGameData();
 }
 
 function on_change_adv_dialog() {
@@ -2772,6 +1839,7 @@ function on_change_adv_dialog() {
 
 function on_game_data_change() {
 	on_game_data_change_core();
+
 	refreshGameData();
 
 	// ui stuff
@@ -2779,25 +1847,76 @@ function on_game_data_change() {
 	refreshGameData();
 }
 
+function convertGameDataToCurVersion(importVersion) {
+	if (importVersion < 5.0) {
+		console.log("version under 5!!!!");
+
+		var PrintFunctionVisitor = function() {
+			var didChange = false;
+			this.DidChange = function() { return didChange; };
+
+			this.Visit = function(node) {
+				if ( node.type != "function" )
+					return;
+
+				// console.log("VISIT " + node.name);
+
+				if ( node.name === "say" ) {
+					node.name = "print";
+					didChange = true;
+				}
+			};
+		};
+
+		for(dlgId in dialog) {
+			console.log("DLG " + dlgId);
+			var dialogScript = scriptInterpreter.Parse( dialog[dlgId] );
+			var visitor = new PrintFunctionVisitor();
+			dialogScript.VisitAll( visitor );
+			if( visitor.DidChange() ) {
+				console.log("CHANGE!");
+				console.log(dialog[dlgId]);
+				var newDialog = dialogScript.Serialize();
+				if(newDialog.indexOf("\n") > -1)
+					newDialog = '"""\n' + newDialog + '\n"""';
+				dialog[dlgId] = newDialog;
+				console.log(dialog[dlgId]);
+			}
+		}
+
+		{
+			var titleScript = scriptInterpreter.Parse( title );
+			var visitor = new PrintFunctionVisitor();
+			titleScript.VisitAll( visitor );
+			if( visitor.DidChange() ) {
+				title = titleScript.Serialize();
+			}
+		}
+	}
+}
+
 function on_game_data_change_core() {
 	clearGameData();
-	parseWorld(document.getElementById("game_data").value); //reparse world if user directly manipulates game data
+	var version = parseWorld(document.getElementById("game_data").value); //reparse world if user directly manipulates game data
 
-	var curPaintMode = paintMode; //save current paint mode (hacky)
+	convertGameDataToCurVersion(version);
+
+	var curPaintMode = drawing.type; //save current paint mode (hacky)
 
 	//fallback if there are no tiles, sprites, map
+	// TODO : switch to using stored default file data (requires separated parser / game data code)
 	if (Object.keys(sprite).length == 0) {
-		paintMode = TileType.Avatar;
-		drawingId = "A";
-		makeSprite(drawingId);
+		drawing.type = TileType.Avatar;
+		drawing.id = "A";
+		makeSprite(drawing.id);
 		sprite["A"].room = null;
 		sprite["A"].x = -1;
 		sprite["A"].y = -1;
 	}
 	if (Object.keys(tile).length == 0) {
-		paintMode = TileType.Tile;
-		drawingId = "a";
-		makeTile(drawingId);
+		drawing.type = TileType.Tile;
+		drawing.id = "a";
+		makeTile(drawing.id);
 	}
 	if (Object.keys(room).length == 0) {
 		room["0"] = {
@@ -2826,37 +1945,82 @@ function on_game_data_change_core() {
 		};
 	}
 	if (Object.keys(item).length == 0) {
-		paintMode = TileType.Item;
-		drawingId = "0";
-		makeItem( drawingId );
+		drawing.type = TileType.Item;
+		drawing.id = "0";
+		makeItem( drawing.id );
 	}
 
-	renderImages();
+	// TODO RENDERER : refresh images
 
-	drawEditMap();
+	roomTool.drawEditMap();
 
-	paintMode = curPaintMode;
-	if ( paintMode == TileType.Tile ) {
-		drawingId = sortedTileIdList()[0];
-		reloadTile();
+	drawing.type = curPaintMode;
+	if ( drawing.type == TileType.Tile ) {
+		drawing.id = sortedTileIdList()[0];
+		paintTool.reloadDrawing();
 	}
-	else if( paintMode === TileType.Item ) {
-		drawingId = sortedItemIdList()[0];
-		reloadItem();
+	else if( drawing.type === TileType.Item ) {
+		drawing.id = sortedItemIdList()[0];
+		paintTool.reloadDrawing();
 	}
 	else {
-		drawingId = sortedSpriteIdList()[0];
-		reloadSprite();
+		drawing.id = sortedSpriteIdList()[0];
+		paintTool.reloadDrawing();
 	}
 
+	// if user pasted in a custom font into game data - update the stored custom font
+	if (areAllFontsLoaded && !editorFontManager.ContainsResource(fontName + editorFontManager.GetExtension())) {
+		var fontStorage = {
+			name : fontName,
+			fontdata : fontManager.GetData(fontName)
+		};
+		localStorage.custom_font = JSON.stringify(fontStorage);
+		editorFontManager.AddResource(fontName + editorFontManager.GetExtension(), fontManager.GetData(fontName));
+	}
 
 	updatePaletteUI();
 
 	updateInventoryUI();
 
+	updateFontSelectUI();
+
 	updateExitOptionsFromGameData();
 
 	document.getElementById("titleText").value = title;
+}
+
+function updateFontSelectUI() {
+	var fontStorage = null;
+	if (localStorage.custom_font != null) {
+		fontStorage = JSON.parse(localStorage.custom_font);
+	}
+
+	var fontSelect = document.getElementById("fontSelect");
+
+	for (var i in fontSelect.options) {
+		var fontOption = fontSelect.options[i];
+		var fontOptionName = (fontOption.value === "custom" && fontStorage != null) ? fontStorage.name : fontOption.value;
+		fontOption.selected = fontOptionName === fontName;
+
+		if (fontOption.value === "custom" && fontStorage != null) {
+			var textSplit = fontOption.text.split("-");
+			fontOption.text = textSplit[0] + "- " + fontStorage.name;
+		}
+	}
+
+	updateFontDescriptionUI();
+}
+
+function updateFontDescriptionUI() {
+	for (var i in fontSelect.options) {
+		var fontOption = fontSelect.options[i];
+		var fontDescriptionId = fontOption.value + "_description";
+		console.log(fontDescriptionId);
+		var fontDescription = document.getElementById(fontDescriptionId);
+		if (fontDescription != null) {
+			fontDescription.style.display = fontOption.selected ? "block" : "none";
+		}
+	}
 }
 
 function updateExitOptionsFromGameData() {
@@ -2885,42 +2049,38 @@ function updateExitOptionsFromGameData() {
 }
 
 function on_toggle_wall(e) {
-	if ( e.target.checked ){
-		//add to wall list
-		room[curRoom].walls.push( drawingId );
-		document.getElementById("wallCheckboxIcon").innerHTML = "border_outer";
-	}
-	else if ( room[curRoom].walls.indexOf(drawingId) != -1 ){
-		//remove from wall list
-		room[curRoom].walls.splice( room[curRoom].walls.indexOf(drawingId), 1 );
-		document.getElementById("wallCheckboxIcon").innerHTML = "border_clear";
-	}
-	console.log(room[curRoom]);
-	refreshGameData();
+	paintTool.toggleWall( e.target.checked );
 }
 
-function apply_wall_setting_all_rooms() {
-	if ( document.getElementById("wallCheckbox").checked ){
-		//add to wall list
-		for (id in room)
-			if (room[id].walls.indexOf(drawingId) == -1) room[id].walls.push( drawingId );
-	}
-	else {
-		//remove from wall list
-		for (id in room) {
-			if (room[id].walls.indexOf(drawingId) != -1) {
-				room[id].walls.splice( room[id].walls.indexOf(drawingId), 1 );
-			}
-		}
-	}
-	refreshGameData();
+function toggleWallUI(checked) {
+	document.getElementById("wallCheckboxIcon").innerHTML = checked ? "border_outer" : "border_clear";
+}
+
+function filenameFromGameTitle() {
+	var filename = title.replace(/[^a-zA-Z]/g, "_"); // replace non alphabet characters
+	filename = filename.toLowerCase();
+	filename = filename.substring(0,32); // keep it from getting too long
+	return filename;
 }
 
 function exportGame() {
 	refreshGameData(); //just in case
-	var gameData = document.getElementById("game_data").value; //grab game data
+	// var gameData = document.getElementById("game_data").value; //grab game data
+	var gameData = getFullGameData();
 	var size = document.getElementById("exportSizeFixedInput").value;
-	exporter.exportGame( gameData, title, exportPageColor, "mygame.html", isFixedSize, size ); //download as html file
+	exporter.exportGame( gameData, title, export_settings.page_color, filenameFromGameTitle() + ".html", isFixedSize, size ); //download as html file
+}
+
+function exportGameData() {
+	refreshGameData(); //just in case
+	// var gameData = document.getElementById("game_data").value; //grab game data
+	var gameData = getFullGameData();
+	ExporterUtils.DownloadFile( filenameFromGameTitle() + ".bitsy", gameData );
+}
+
+function exportFont() {
+	var fontData = editorFontManager.GetData(fontName);
+	ExporterUtils.DownloadFile( fontName + ".bitsyfont", fontData );
 }
 
 function hideAbout() {
@@ -2952,7 +2112,6 @@ function toggleVersionNotes(e) {
 
 /* EXITS */
 var isAddingExit = false;
-var areExitsVisible = true;
 var selectedExit = null;
 var exit_canvas;
 var exit_ctx;
@@ -2966,16 +2125,16 @@ function resetExitVars() {
 function showExits() {
 	console.log("show exits");
 	resetExitVars();
-	areExitsVisible = true;
-	drawEditMap();
+	roomTool.areExitsVisible = true;
+	roomTool.drawEditMap();
 	drawExitDestinationRoom();
 }
 
 function hideExits() {
 	console.log("hide exits");
 	resetExitVars();
-	areExitsVisible = false;
-	drawEditMap();
+	roomTool.areExitsVisible = false;
+	roomTool.drawEditMap();
 	drawExitDestinationRoom();
 }
 
@@ -3035,7 +2194,7 @@ function setSelectedExit(e) {
 		drawExitDestinationRoom();
 	}
 
-	drawEditMap();
+	roomTool.drawEditMap();
 
 	return didChange;
 }
@@ -3055,7 +2214,7 @@ function exitDestinationRoomChange(event) {
 
 function drawExitDestinationRoom() {
 	//clear screen
-	console.log(selectedExitRoom);
+	console.log("SELECTED EXIT ROOM " + selectedExitRoom);
 	var roomPal = getRoomPal(selectedExitRoom);
 	exit_ctx.fillStyle = "rgb("+getPal(roomPal)[0][0]+","+getPal(roomPal)[0][1]+","+getPal(roomPal)[0][2]+")";
 	exit_ctx.fillRect(0,0,canvas.width,canvas.height);
@@ -3257,22 +2416,101 @@ function updatePanelPrefs() {
 	console.log(localStorage.panel_prefs);
 }
 
+
+var gifRecordingInterval = null;
 function startRecordingGif() {
 	gifFrameData = [];
-	if (isPlayMode)
-		gifFrameData.push( ctx.getImageData(0,0,512,512).data );
-	isRecordingGif = true;
+
 	document.getElementById("gifStartButton").style.display="none";
+	document.getElementById("gifSnapshotButton").style.display="none";
 	document.getElementById("gifStopButton").style.display="inline";
 	document.getElementById("gifRecordingText").style.display="inline";
+	document.getElementById("gifPreview").style.display="none";
+	document.getElementById("gifPlaceholder").style.display="block";
+
+	gifRecordingInterval = setInterval( function() {
+		gifFrameData.push( ctx.getImageData(0,0,512,512).data );
+	}, 100 );
+}
+
+var gifCaptureCanvas; // initialized in start() -- should be in own module?
+var gifCaptureCtx;
+var gifCaptureWidescreenSize = {
+	width : 726, // height * 1.26
+	height : 576
+};
+
+function takeSnapshotGif(e) {
+	var gif = {
+		frames: [],
+		width: 512,
+		height: 512,
+		loops: 0,
+		delay: animationTime / 10
+	};
+
+	gifCaptureCanvas.width = 512; // stop hardcoding 512?
+	gifCaptureCanvas.height = 512;
+
+	drawRoom( room[curRoom], gifCaptureCtx, 0 );
+	var frame0 = gifCaptureCtx.getImageData(0,0,512,512);
+
+	drawRoom( room[curRoom], gifCaptureCtx, 1 );
+	var frame1 = gifCaptureCtx.getImageData(0,0,512,512);
+
+	if(e.altKey) {
+		/* widescreen */
+		gif.width = gifCaptureWidescreenSize.width;
+		gif.height = gifCaptureWidescreenSize.height;
+		gifCaptureCanvas.width = gifCaptureWidescreenSize.width;
+		gifCaptureCanvas.height = gifCaptureWidescreenSize.height;
+
+		var widescreenX = (gifCaptureWidescreenSize.width / 2) - (512 / 2);
+		var widescreenY = (gifCaptureWidescreenSize.height / 2) - (512 / 2);
+
+		gifCaptureCtx.fillStyle = "rgb(" + getPal(curPal())[0][0] + "," + getPal(curPal())[0][1] + "," + getPal(curPal())[0][2] + ")";
+		gifCaptureCtx.fillRect(0,0,gifCaptureWidescreenSize.width,gifCaptureWidescreenSize.height);
+
+		gifCaptureCtx.putImageData(frame0,widescreenX,widescreenY);
+		frame0 = gifCaptureCtx.getImageData(0,0,gifCaptureWidescreenSize.width,gifCaptureWidescreenSize.height);
+
+		gifCaptureCtx.putImageData(frame1,widescreenX,widescreenY);
+		frame1 = gifCaptureCtx.getImageData(0,0,gifCaptureWidescreenSize.width,gifCaptureWidescreenSize.height);
+	}
+
+	gif.frames.push( frame0.data );
+	gif.frames.push( frame1.data );
+
+	finishRecordingGif(gif);
 }
 
 function stopRecordingGif() {
+	var gif = {
+		frames: gifFrameData,
+		width: 512,
+		height: 512,
+		loops: 0,
+		delay: 10
+	};
+
+	finishRecordingGif(gif);
+}
+
+// TODO - palette for rainbow text
+function finishRecordingGif(gif) {
+	if(gifRecordingInterval != null) {
+		clearInterval( gifRecordingInterval );
+		gifRecordingInterval = null;
+	}
+
+	document.getElementById("gifStartButton").style.display="none";
+	document.getElementById("gifSnapshotButton").style.display="none";
 	document.getElementById("gifStopButton").style.display="none";
 	document.getElementById("gifRecordingText").style.display="none";
 	document.getElementById("gifEncodingText").style.display="inline";
+	document.getElementById("gifEncodingProgress").innerText = "0";
 
-	if(gifFrameData.length <= 0) {
+	if(gif.frames.length <= 0) {
 		document.getElementById("gifEncodingText").style.display="none";
 		document.getElementById("gifStartButton").style.display="inline";
 		return; // nothing recorded, nothing to encode
@@ -3280,43 +2518,60 @@ function stopRecordingGif() {
 
 	setTimeout( function() {
 		var hexPalette = [];
+		// add black & white
+		hexPalette.push( rgbToHex(0,0,0).slice(1) ); // need to slice off leading # (should that safeguard go in gif.js?)
+		hexPalette.push( rgbToHex(255,255,255).slice(1) );
+		// add all user defined palette colors
 		for (id in palette) {
 			for (i in getPal(id)){
 				var hexStr = rgbToHex( getPal(id)[i][0], getPal(id)[i][1], getPal(id)[i][2] ).slice(1);
 				hexPalette.push( hexStr );
 			}
 		}
-		//console.log(hexPalette);
-		//console.log(gifFrameData);
-		var gif = {
-			frames: gifFrameData,
-			width: 512,
-			height: 512,
-			palette: hexPalette,
-			loops: 0,
-			delay: 30
-		};
-		gifencoder.encode( gif, function(uri, blob) {
-			document.getElementById("gifEncodingText").style.display="none";
-			document.getElementById("gifStartButton").style.display="inline";
-			//console.log("encoding finished!");
-			//console.log(uri);
-			document.getElementById("gifPreview").src = uri;
+		// add rainbow colors (for rainbow text effect)
+		hexPalette.push( hslToHex(0.0,1,0.5).slice(1) );
+		hexPalette.push( hslToHex(0.1,1,0.5).slice(1) );
+		hexPalette.push( hslToHex(0.2,1,0.5).slice(1) );
+		hexPalette.push( hslToHex(0.3,1,0.5).slice(1) );
+		hexPalette.push( hslToHex(0.4,1,0.5).slice(1) );
+		hexPalette.push( hslToHex(0.5,1,0.5).slice(1) );
+		hexPalette.push( hslToHex(0.6,1,0.5).slice(1) );
+		hexPalette.push( hslToHex(0.7,1,0.5).slice(1) );
+		hexPalette.push( hslToHex(0.8,1,0.5).slice(1) );
+		hexPalette.push( hslToHex(0.9,1,0.5).slice(1) );
 
-			if( browserFeatures.blobURL ) {
-				document.getElementById("gifDownload").href = makeURL.createObjectURL( blob );
+		gif.palette = hexPalette; // hacky
+
+		gifencoder.encode( gif, 
+			function(uri, blob) {
+				document.getElementById("gifEncodingText").style.display="none";
+				document.getElementById("gifStartButton").style.display="inline";
+				document.getElementById("gifPreview").src = uri;
+				document.getElementById("gifPreview").style.display="block";
+				document.getElementById("gifPlaceholder").style.display="none";
+				document.getElementById("gifSnapshotButton").style.display="inline";
+
+				if( browserFeatures.blobURL ) {
+					document.getElementById("gifDownload").href = makeURL.createObjectURL( blob );
+				}
+				else {
+					var downloadData = uri.replace("data:;", "data:attachment/file;"); // for safari
+					document.getElementById("gifDownload").href = downloadData;
+				}
+			},
+			function(curFrame, maxFrame) {
+				document.getElementById("gifEncodingProgress").innerText = Math.floor( (curFrame / maxFrame) * 100 );
 			}
-			else {
-				var downloadData = uri.replace("data:;", "data:attachment/file;"); // for safari
-				document.getElementById("gifDownload").href = downloadData;
-			}
-		});
-		isRecordingGif = false;
+		);
 	}, 10);
 }
 
 /* LOAD FROM FILE */
 function importGameFromFile(e) {
+	resetGameData();
+
+	console.log("IMPORT START");
+
 	// load file chosen by user
 	var files = e.target.files;
 	var file = files[0];
@@ -3326,10 +2581,45 @@ function importGameFromFile(e) {
 	reader.onloadend = function() {
 		var fileText = reader.result;
 		gameDataStr = exporter.importGame( fileText );
+
+		console.log("import load end");
+		// console.log(gameDataStr);
 		
 		// change game data & reload everything
 		document.getElementById("game_data").value = gameDataStr;
 		on_game_data_change();
+
+		paintExplorer.Refresh(drawing.type);
+	}
+}
+
+function importFontFromFile(e) {
+	// load file chosen by user
+	var files = e.target.files;
+	var file = files[0];
+	var reader = new FileReader();
+	reader.readAsText( file );
+
+	reader.onloadend = function() {
+		var fileText = reader.result;
+		console.log(fileText);
+
+		var customFontName = (editorFontManager.Create(fileText)).getName();
+
+		editorFontManager.AddResource(customFontName + editorFontManager.GetExtension(), fileText);
+		switchFont(customFontName); // bitsy engine setting
+
+		var fontStorage = {
+			name : customFontName,
+			fontdata : fileText
+		};
+		localStorage.custom_font = JSON.stringify(fontStorage);
+
+		refreshGameData();
+		updateFontSelectUI();
+
+		// TODO
+		// fontLoadSettings.resources.set("custom.txt", fileText); // hacky!!!
 	}
 }
 
@@ -3337,238 +2627,240 @@ function importGameFromFile(e) {
 function on_toggle_animated() {
 	console.log("ON TOGGLE ANIMATED");
 	console.log(document.getElementById("animatedCheckbox").checked);
-	console.log(paintMode);
+	console.log(drawing.type);
 	console.log("~~~~~");
 	if ( document.getElementById("animatedCheckbox").checked ) {
-		if ( paintMode === TileType.Sprite || paintMode === TileType.Avatar ) {
+		if ( drawing.type === TileType.Sprite || drawing.type === TileType.Avatar ) {
 			addSpriteAnimation();
 		}
-		else if ( paintMode === TileType.Tile ) {
+		else if ( drawing.type === TileType.Tile ) {
 			addTileAnimation();
 		}
-		else if ( paintMode === TileType.Item ) {
+		else if ( drawing.type === TileType.Item ) {
 			addItemAnimation();
 		}
 		document.getElementById("animation").setAttribute("style","display:block;");
 		document.getElementById("animatedCheckboxIcon").innerHTML = "expand_more";
-		console.log(drawingId);
-		renderAnimationPreview( drawingId );
+		console.log(drawing.id);
+		renderAnimationPreview( drawing.id );
 	}
 	else {
-		if ( paintMode === TileType.Sprite || paintMode === TileType.Avatar ) {
+		if ( drawing.type === TileType.Sprite || drawing.type === TileType.Avatar ) {
 			removeSpriteAnimation();
 		}
-		else if ( paintMode === TileType.Tile ) {
+		else if ( drawing.type === TileType.Tile ) {
 			removeTileAnimation();			
 		}
-		else if ( paintMode === TileType.Item ) {
+		else if ( drawing.type === TileType.Item ) {
 			console.log("REMOVE ITEM ANIMATION");
 			removeItemAnimation();
 		}
 		document.getElementById("animation").setAttribute("style","display:none;");
 		document.getElementById("animatedCheckboxIcon").innerHTML = "expand_less";
 	}
-	renderPaintThumbnail( drawingId );
+	renderPaintThumbnail( drawing.id );
 }
 
 function addSpriteAnimation() {
 	//set editor mode
-	isCurDrawingAnimated = true;
-	curDrawingFrameIndex = 0;
+	paintTool.isCurDrawingAnimated = true;
+	paintTool.curDrawingFrameIndex = 0;
 
 	//mark sprite as animated
-	sprite[drawingId].animation.isAnimated = true;
-	sprite[drawingId].animation.frameIndex = 0;
-	sprite[drawingId].animation.frameCount = 2;
+	sprite[drawing.id].animation.isAnimated = true;
+	sprite[drawing.id].animation.frameIndex = 0;
+	sprite[drawing.id].animation.frameCount = 2;
 
 	//add blank frame to sprite (or restore removed animation)
-	var spriteImageId = "SPR_" + drawingId;
-	if (sprite[drawingId].cachedAnimation != null)
-		restoreDrawingAnimation( spriteImageId, sprite[drawingId].cachedAnimation )
+	var spriteImageId = "SPR_" + drawing.id;
+	if (sprite[drawing.id].cachedAnimation != null)
+		restoreDrawingAnimation( spriteImageId, sprite[drawing.id].cachedAnimation )
 	else
 		addNewFrameToDrawing( spriteImageId );
 
+	// TODO RENDERER : refresh images
+
 	//refresh data model
-	renderImages();
 	refreshGameData();
-	reloadSprite();
+	paintTool.reloadDrawing();
 }
 
 function removeSpriteAnimation() {
 	//set editor mode
-	isCurDrawingAnimated = false;
+	paintTool.isCurDrawingAnimated = false;
 
 	//mark sprite as non-animated
-	sprite[drawingId].animation.isAnimated = false;
-	sprite[drawingId].animation.frameIndex = 0;
-	sprite[drawingId].animation.frameCount = 0;
+	sprite[drawing.id].animation.isAnimated = false;
+	sprite[drawing.id].animation.frameIndex = 0;
+	sprite[drawing.id].animation.frameCount = 0;
 
 	//remove all but the first frame of the sprite
-	var spriteImageId = "SPR_" + drawingId;
-	cacheDrawingAnimation( sprite[drawingId], spriteImageId );
+	var spriteImageId = "SPR_" + drawing.id;
+	cacheDrawingAnimation( sprite[drawing.id], spriteImageId );
 	removeDrawingAnimation( spriteImageId );
 
+	// TODO RENDERER : refresh images
+
 	//refresh data model
-	renderImages();
 	refreshGameData();
-	reloadSprite();
+	paintTool.reloadDrawing();
 }
 
 function addTileAnimation() {
 	//set editor mode
-	isCurDrawingAnimated = true;
-	curDrawingFrameIndex = 0;
+	paintTool.isCurDrawingAnimated = true;
+	paintTool.curDrawingFrameIndex = 0;
 
 	//mark tile as animated
-	tile[drawingId].animation.isAnimated = true;
-	tile[drawingId].animation.frameIndex = 0;
-	tile[drawingId].animation.frameCount = 2;
+	tile[drawing.id].animation.isAnimated = true;
+	tile[drawing.id].animation.frameIndex = 0;
+	tile[drawing.id].animation.frameCount = 2;
 
 	//add blank frame to tile (or restore removed animation)
-	var tileImageId = "TIL_" + drawingId;
-	if (tile[drawingId].cachedAnimation != null)
-		restoreDrawingAnimation( tileImageId, tile[drawingId].cachedAnimation )
+	var tileImageId = "TIL_" + drawing.id;
+	if (tile[drawing.id].cachedAnimation != null)
+		restoreDrawingAnimation( tileImageId, tile[drawing.id].cachedAnimation )
 	else
 		addNewFrameToDrawing( tileImageId );
 
+	// TODO RENDERER : refresh images
+
 	//refresh data model
-	renderImages();
 	refreshGameData();
-	reloadTile();
+	paintTool.reloadDrawing();
 }
 
 function removeTileAnimation() {
 	//set editor mode
-	isCurDrawingAnimated = false;
+	paintTool.isCurDrawingAnimated = false;
 
 	//mark tile as non-animated
-	tile[drawingId].animation.isAnimated = false;
-	tile[drawingId].animation.frameIndex = 0;
-	tile[drawingId].animation.frameCount = 0;
+	tile[drawing.id].animation.isAnimated = false;
+	tile[drawing.id].animation.frameIndex = 0;
+	tile[drawing.id].animation.frameCount = 0;
 
 	//remove all but the first frame of the tile
-	var tileImageId = "TIL_" + drawingId;
-	cacheDrawingAnimation( tile[drawingId], tileImageId );
+	var tileImageId = "TIL_" + drawing.id;
+	cacheDrawingAnimation( tile[drawing.id], tileImageId );
 	removeDrawingAnimation( tileImageId );
 
+	// TODO RENDERER : refresh images
+
 	//refresh data model
-	renderImages();
 	refreshGameData();
-	reloadTile();
+	paintTool.reloadDrawing();
 }
 
 // TODO : so much duplication it makes me sad :(
 function addItemAnimation() {
 	//set editor mode
-	isCurDrawingAnimated = true;
-	curDrawingFrameIndex = 0;
+	paintTool.isCurDrawingAnimated = true;
+	paintTool.curDrawingFrameIndex = 0;
 
 	//mark item as animated
-	item[drawingId].animation.isAnimated = true;
-	item[drawingId].animation.frameIndex = 0;
-	item[drawingId].animation.frameCount = 2;
+	item[drawing.id].animation.isAnimated = true;
+	item[drawing.id].animation.frameIndex = 0;
+	item[drawing.id].animation.frameCount = 2;
 
 	//add blank frame to item (or restore removed animation)
-	var itemImageId = "ITM_" + drawingId;
-	if (item[drawingId].cachedAnimation != null)
-		restoreDrawingAnimation( itemImageId, item[drawingId].cachedAnimation )
+	var itemImageId = "ITM_" + drawing.id;
+	if (item[drawing.id].cachedAnimation != null)
+		restoreDrawingAnimation( itemImageId, item[drawing.id].cachedAnimation )
 	else
 		addNewFrameToDrawing( itemImageId );
 
+	// TODO RENDERER : refresh images
+
 	//refresh data model
-	renderImages();
 	refreshGameData();
-	reloadItem();
+	paintTool.reloadDrawing();
 }
 
 function removeItemAnimation() {
 	//set editor mode
-	isCurDrawingAnimated = false;
+	paintTool.isCurDrawingAnimated = false;
 
 	//mark item as non-animated
-	item[drawingId].animation.isAnimated = false;
-	item[drawingId].animation.frameIndex = 0;
-	item[drawingId].animation.frameCount = 0;
+	item[drawing.id].animation.isAnimated = false;
+	item[drawing.id].animation.frameIndex = 0;
+	item[drawing.id].animation.frameCount = 0;
 
 	//remove all but the first frame of the item
-	var itemImageId = "ITM_" + drawingId;
-	cacheDrawingAnimation( item[drawingId], itemImageId );
+	var itemImageId = "ITM_" + drawing.id;
+	cacheDrawingAnimation( item[drawing.id], itemImageId );
 	removeDrawingAnimation( itemImageId );
 
-	//refresh data model
-	renderImages();
+	// TODO RENDERER : refresh images
+
+	//refresh data model (TODO : these should really be a shared method)
 	refreshGameData();
-	reloadItem();
+	paintTool.reloadDrawing();
 }
 
 function addNewFrameToDrawing(drwId) {
-	var newFrame = [
-		[0,0,0,0,0,0,0,0],
-		[0,0,0,0,0,0,0,0],
-		[0,0,0,0,0,0,0,0],
-		[0,0,0,0,0,0,0,0],
-		[0,0,0,0,0,0,0,0],
-		[0,0,0,0,0,0,0,0],
-		[0,0,0,0,0,0,0,0],
-		[0,0,0,0,0,0,0,0]
-	];
-	imageStore.source[ drwId ].push( newFrame );
+	// copy first frame data into new frame
+	var imageSource = renderer.GetImageSource(drwId);
+	var firstFrame = imageSource[0];
+	var newFrame = [];
+	for (var y = 0; y < tilesize; y++) {
+		newFrame.push([]);
+		for (var x = 0; x < tilesize; x++) {
+			newFrame[y].push( firstFrame[y][x] );
+		}
+	}
+	imageSource.push( newFrame );
+	renderer.SetImageSource(drwId, imageSource);
 }
 
 function removeDrawingAnimation(drwId) {
-	var oldImageData = imageStore.source[ drwId ].slice(0);
-	imageStore.source[ drwId ] = [ oldImageData[0] ];
+	var imageSource = renderer.GetImageSource(drwId);
+	var oldImageData = imageSource.slice(0);
+	renderer.SetImageSource( drwId, [ oldImageData[0] ] );
 }
 
 // let's us restore the animation during the session if the user wants it back
-function cacheDrawingAnimation(drawing,imageStoreId) {
-	var oldImageData = imageStore.source[ imageStoreId ].slice(0);
+function cacheDrawingAnimation(drawing,sourceId) {
+	var imageSource = renderer.GetImageSource(sourceId);
+	var oldImageData = imageSource.slice(0);
 	drawing.cachedAnimation = [ oldImageData[1] ]; // ah the joys of javascript
 }
 
-function restoreDrawingAnimation(imageStoreId,cachedAnimation) {
+function restoreDrawingAnimation(sourceId,cachedAnimation) {
+	var imageSource = renderer.GetImageSource(sourceId);
 	for (f in cachedAnimation) {
-		imageStore.source[ imageStoreId ].push( cachedAnimation[f] );	
+		imageSource.push( cachedAnimation[f] );	
 	}
-}
-
-function reloadCurDrawing() {
-	if ( paintMode === TileType.Tile) {
-		reloadTile();
-	}
-	else if( paintMode === TileType.Avatar || paintMode === TileType.Sprite ) {
-		reloadSprite();
-	}
-	else if( paintMode === TileType.Item ) {
-		reloadItem();
-	}
+	renderer.SetImageSource(sourceId, imageSource);
 }
 
 function on_paint_frame1() {
-	curDrawingFrameIndex = 0;
-	reloadCurDrawing();
+	paintTool.curDrawingFrameIndex = 0;
+	paintTool.reloadDrawing();
 }
 
 function on_paint_frame2() {
-	curDrawingFrameIndex = 1;
-	reloadCurDrawing();
+	paintTool.curDrawingFrameIndex = 1;
+	paintTool.reloadDrawing();
 }
 
+var export_settings = {
+	page_color : "#ffffff"
+};
 
-var exportPageColor = "#fff";
 function on_change_color_page() {
 	var hex = document.getElementById("pageColor").value;
 	//console.log(hex);
 	var rgb = hexToRgb( hex );
 	// document.body.style.background = hex;
 	document.getElementById("roomPanel").style.background = hex;
-	exportPageColor = hex;
+	export_settings.page_color = hex;
+
+	localStorage.export_settings = JSON.stringify( export_settings );
 }
 
 /* ENDINGS */
 var isAddingEnding = false;
 var selectedEndingTile = null;
-var areEndingsVisible = false;
 
 function hasEndings() {
 	return Object.keys(ending).length > 0;
@@ -3650,13 +2942,13 @@ function addEndingToCurRoom(x,y) {
 
 function showEndings() {
 	// resetExitVars(); -- what's this for?
-	areEndingsVisible = true;
-	drawEditMap();
+	roomTool.areEndingsVisible = true;
+	roomTool.drawEditMap();
 }
 
 function hideEndings() {
-	areEndingsVisible = false;
-	drawEditMap();
+	roomTool.areEndingsVisible = false;
+	roomTool.drawEditMap();
 }
 
 function setSelectedEnding(e) { //todo
@@ -3674,7 +2966,7 @@ function setSelectedEnding(e) { //todo
 		document.getElementById("removeEndingButton").style.display = "block";
 	}
 
-	drawEditMap();
+	roomTool.drawEditMap();
 
 	return didChange;
 }
@@ -3683,53 +2975,6 @@ function removeSelectedEnding() {
 	room[curRoom].endings.splice( room[curRoom].endings.indexOf( selectedEndingTile ), 1 );
 	refreshGameData();
 	setSelectedEnding(null);
-}
-
-/**
- * From: http://stackoverflow.com/questions/2353211/hsl-to-rgb-color-conversion
- *
- * Converts an RGB color value to HSL. Conversion formula
- * adapted from http://en.wikipedia.org/wiki/HSL_color_space.
- * Assumes r, g, and b are contained in the set [0, 255] and
- * returns h, s, and l in the set [0, 1].
- *
- * @param   {number}  r       The red color value
- * @param   {number}  g       The green color value
- * @param   {number}  b       The blue color value
- * @return  {Array}           The HSL representation
- */
-function rgbToHsl(r, g, b){
-    r /= 255, g /= 255, b /= 255;
-    var max = Math.max(r, g, b), min = Math.min(r, g, b);
-    var h, s, l = (max + min) / 2;
-
-    if(max == min){
-        h = s = 0; // achromatic
-    }else{
-        var d = max - min;
-        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-        switch(max){
-            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-            case g: h = (b - r) / d + 2; break;
-            case b: h = (r - g) / d + 4; break;
-        }
-        h /= 6;
-    }
-
-    return [h, s, l];
-}
-
-function getContrastingColor(palId) {
-	if (!palId) palId = curPal();
-	var hsl = rgbToHsl( getPal(palId)[0][0], getPal(palId)[0][1], getPal(palId)[0][2] );
-	// console.log(hsl);
-	var lightness = hsl[2];
-	if (lightness > 0.5) {
-		return "#000";
-	}
-	else {
-		return "#fff";
-	}
 }
 
 function getComplimentingColor(palId) {
@@ -3754,15 +2999,22 @@ var grabbedPanel = {
 };
 
 function grabCard(e) {
-	e.preventDefault();
+	if(Ed().platform === PlatformType.Mobile)
+		return; // This doesn't work on mobile
+
+	// e.preventDefault();
 
 	console.log(grabbedPanel.card);
 
 	if (grabbedPanel.card != null) return;
 
-	console.log("grab!");
+	grabbedPanel.card = e.target;
+	while(!grabbedPanel.card.classList.contains("panel") && !(grabbedPanel.card == null)) {
+		grabbedPanel.card = grabbedPanel.card.parentElement;
+	}
 
-	grabbedPanel.card = e.target.parentElement.parentElement;
+	if(grabbedPanel.card == null) return; // couldn't find a panel above the handle - abort!
+
 	grabbedPanel.size = getElementSize( grabbedPanel.card );
 	var pos = getElementPosition( grabbedPanel.card );
 	
@@ -3770,6 +3022,10 @@ function grabCard(e) {
 	grabbedPanel.shadow.className = "panelShadow";
 	grabbedPanel.shadow.style.width = grabbedPanel.size.x + "px";
 	grabbedPanel.shadow.style.height = grabbedPanel.size.y + "px";
+
+	console.log( document.getElementById("editorContent") );
+	console.log( grabbedPanel.shadow );
+	console.log( grabbedPanel.card );
 
 	document.getElementById("editorContent").insertBefore( grabbedPanel.shadow, grabbedPanel.card );
 	grabbedPanel.cursorOffset.x = e.clientX - pos.x;
@@ -3852,11 +3108,11 @@ function blockScrollBackpage(e) {
 	var el = document.getElementById("editorWindow");
 	var maxX = el.scrollWidth - el.offsetWidth;
 
-	if ( el.scrollLeft + e.deltaX < 0 || el.scrollLeft + e.deltaX > maxX )
-	{
-		e.preventDefault();
-		el.scrollLeft = Math.max(0, Math.min(maxX, el.scrollLeft + event.deltaX));
-	}
+	// if ( el.scrollLeft + e.deltaX < 0 || el.scrollLeft + e.deltaX > maxX )
+	// {
+	// 	e.preventDefault();
+	// 	el.scrollLeft = Math.max(0, Math.min(maxX, el.scrollLeft + event.deltaX));
+	// }
 }
 
 
@@ -3914,13 +3170,13 @@ function onTextSelectionLeave(event) {
 
 function preventTextDeselect(event) {
 	if(dialogSel.target != null) {
-		event.preventDefault();
+		// event.preventDefault();
 	}
 }
 
 function preventTextDeselectAndClick(event) {
 	if(dialogSel.target != null) {
-		event.preventDefault();
+		// event.preventDefault();
 		event.target.click();
 	}
 }
@@ -3985,7 +3241,7 @@ var DialogBlockUI = function(nodes, num) {
 	leftSpan.appendChild( numSpan );
 
 	var typeEl = document.createElement("span");
-	typeEl.innerText = "dialog";
+	typeEl.innerText = localization.GetStringOrFallback("dialog_block_basic", "dialog");
 	typeEl.title = "this dialog is said once on each interaction";
 	leftSpan.appendChild( typeEl );
 
@@ -4087,7 +3343,7 @@ var IfBlockUI = function(node, num) {
 	leftSpan.appendChild( numSpan );
 
 	var typeEl = document.createElement("span");
-	typeEl.innerText = "conditional";
+	typeEl.innerText = localization.GetStringOrFallback("dialog_block_conditional", "conditional");
 	typeEl.title = "which dialog option is said is determined by conditions you define"
 	leftSpan.appendChild( typeEl );
 
@@ -4122,6 +3378,12 @@ var IfBlockUI = function(node, num) {
 	}
 
 	var conditionTypes = ["item","variable","default","custom"];
+	var conditionTypeNames = [
+		localization.GetStringOrFallback("item_label", "item"),
+		localization.GetStringOrFallback("variable_label", "variable"),
+		localization.GetStringOrFallback("condition_type_default", "default"),
+		localization.GetStringOrFallback("condition_type_custom", "custom")
+	];
 	// var conditionTypesVerbose = ["the player's inventory of the item", "the value of the variable", "no other condition is met (default)", "a custom condition is met"]
 	// var comparisonNames = ["equals","greater than","less than","greater than or equal to","less than or equal to"];
 	var comparisonTypes = ["==", ">", "<", ">=", "<="];
@@ -4256,7 +3518,7 @@ var IfBlockUI = function(node, num) {
 	addConditionEl.title = "add a new dialog option to this conditional dialog section"
 	addConditionEl.appendChild( createIconElement("add") );
 	var addConditionText = document.createElement("span");
-	addConditionText.innerText = "add option";
+	addConditionText.innerText = localization.GetStringOrFallback("dialog_conditional_add", "add option");
 	addConditionEl.appendChild( addConditionText );
 
 	function addCondition(condition, result, index) {
@@ -4289,7 +3551,7 @@ var IfBlockUI = function(node, num) {
 
 
 		var condSpan = document.createElement("span");
-		condSpan.innerText = "when ";
+		condSpan.innerText = localization.GetStringOrFallback("dialog_conditional_when", "when ");
 		condSpan.title = "define the condition for which this dialog option is said";
 		condInnerDiv.appendChild(condSpan);
 		var condTypeSelect = document.createElement("select");
@@ -4298,7 +3560,7 @@ var IfBlockUI = function(node, num) {
 		for(var i = 0; i < conditionTypes.length; i++) {
 			var condTypeOption = document.createElement("option");
 			condTypeOption.value = conditionTypes[i];
-			condTypeOption.innerText = conditionTypes[i];
+			condTypeOption.innerText = conditionTypeNames[i];
 			condTypeSelect.appendChild(condTypeOption);
 		}
 		// condInnerDiv.appendChild( document.createElement("br") );
@@ -4308,7 +3570,7 @@ var IfBlockUI = function(node, num) {
 		for(id in item) {
 			var condItemOption = document.createElement("option");
 			condItemOption.value = id;
-			condItemOption.innerText = (item[id].name != null ? item[id].name : "item " + id); //"item " + id;
+			condItemOption.innerText = (item[id].name != null ? item[id].name : localization.GetStringOrFallback("item_label", "item") + " " + id);
 			condItemSelect.appendChild(condItemOption);
 		}
 		var condVariableSelect = document.createElement("select");
@@ -4329,7 +3591,7 @@ var IfBlockUI = function(node, num) {
 		for(var i = 0; i < comparisonTypes.length; i++) {
 			var condCompareOption = document.createElement("option");
 			condCompareOption.value = comparisonTypes[i];
-			condCompareOption.innerText = comparisonTypes[i]; //comparisonNames[i];
+			condCompareOption.innerText = comparisonTypes[i];
 			condCompareSelect.appendChild(condCompareOption);
 		}
 		var condValueInput = document.createElement("input");
@@ -4455,7 +3717,7 @@ var SeqBlockUI = function(node, num) {
 	leftSpan.appendChild( numSpan );
 
 	var typeEl = document.createElement("span");
-	typeEl.innerText = "list"; //sequenceNode.type;
+	typeEl.innerText = localization.GetStringOrFallback("dialog_block_list", "list");
 	typeEl.title = "one line of dialog in the list is said on each interaction, in the order you choose";
 	leftSpan.appendChild( typeEl );
 	
@@ -4480,7 +3742,7 @@ var SeqBlockUI = function(node, num) {
 	// div.appendChild( document.createElement("br") );
 
 	var orderEl = document.createElement("span");
-	orderEl.innerText = "order: ";
+	orderEl.innerText = localization.GetStringOrFallback("dialog_list_order", "order: ");
 	orderEl.title = "select the order in which lines are said";
 	div.appendChild( orderEl );
 
@@ -4494,7 +3756,11 @@ var SeqBlockUI = function(node, num) {
 	});
 	div.appendChild(selectEl);
 	var sequenceTypes = ["sequence","cycle","shuffle"];
-	var sequenceDesc = ["sequence (say each line once)", "cycle (say each line, then repeat)", "shuffle (say lines in random order)"];
+	var sequenceDesc = [
+		localization.GetStringOrFallback("list_type_description_sequence", "sequence (say each line once)"),
+		localization.GetStringOrFallback("list_type_description_cycle", "cycle (say each line, then repeat)"),
+		localization.GetStringOrFallback("list_type_description_shuffle", "shuffle (say lines in random order)")
+	];
 	for(var i = 0; i < sequenceTypes.length; i++) {
 		var optionEl = document.createElement("option");
 		optionEl.value = sequenceTypes[i];
@@ -4511,7 +3777,7 @@ var SeqBlockUI = function(node, num) {
 	// addOptionEl.innerText = "add";
 	addOptionEl.appendChild( createIconElement("add") );
 	var addOptionText = document.createElement("span");
-	addOptionText.innerText = "add line";
+	addOptionText.innerText = localization.GetStringOrFallback("dialog_list_add", "add line");
 	addOptionEl.title = "add a new line of dialog to the list";
 	addOptionEl.appendChild( addOptionText );
 
@@ -4677,7 +3943,7 @@ function serializeAdvDialog() {
 	var dialogStr = scriptRoot.Serialize();
 	if( dialogStr.length <= 0 )
 	{
-		getCurPaintObject().dlg = null;
+		paintTool.getCurObject().dlg = null;
 		delete dialog[dialogId];
 	}
 	else
@@ -4688,9 +3954,9 @@ function serializeAdvDialog() {
 		previewDialogScriptTree = scriptRoot; // scriptInterpreter.Parse( dialogStr ); // hacky
 
 		if(!dialogId) {
-			var prefix = (paintMode == TileType.Item) ? "ITM_" : "SPR_";
+			var prefix = (drawing.type == TileType.Item) ? "ITM_" : "SPR_";
 			dialogId = nextAvailableDialogId( prefix );
-			getCurPaintObject().dlg = dialogId;
+			paintTool.getCurObject().dlg = dialogId;
 		}
 
 		dialog[dialogId] = dialogStr; //TODO: do I need to do more here?
@@ -4769,20 +4035,37 @@ function createAdvDialogEditor(scriptTree) {
 	addText();
 }
 
+function toggleDialogCode(e) {
+	console.log("DIALOG CODE");
+	console.log(e.target.checked);
+	if (e.target.checked) {
+		showDialogCode();
+	}
+	else {
+		hideDialogCode();
+	}
+}
+
 function showDialogCode() {
 	document.getElementById("dialogCode").style.display = "block";
 	document.getElementById("dialogEditor").style.display = "none";
-	document.getElementById("dialogShowCode").style.display = "none";
-	document.getElementById("dialogHideCode").style.display = "block";
+	// document.getElementById("dialogShowCode").style.display = "none";
+	// document.getElementById("dialogHideCode").style.display = "block";
 	document.getElementById("dialogTools").style.display = "none";
+
+	document.getElementById("dialogToggleCodeShowText").style.display = "none";
+	document.getElementById("dialogToggleCodeHideText").style.display = "inline";
 }
 
 function hideDialogCode() {
 	document.getElementById("dialogCode").style.display = "none";
 	document.getElementById("dialogEditor").style.display = "block";
-	document.getElementById("dialogShowCode").style.display = "block";
-	document.getElementById("dialogHideCode").style.display = "none";
+	// document.getElementById("dialogShowCode").style.display = "block";
+	// document.getElementById("dialogHideCode").style.display = "none";
 	document.getElementById("dialogTools").style.display = "block";
+
+	document.getElementById("dialogToggleCodeShowText").style.display = "inline";
+	document.getElementById("dialogToggleCodeHideText").style.display = "none";
 }
 
 function showDialogToolsSection() {
@@ -4797,7 +4080,7 @@ function showDialogToolsEffects() {
 
 /* INVENTORY UI */
 function updateInventoryUI() {
-	console.log("~~~ UPDATE INVENTORY ~~~");
+	// console.log("~~~ UPDATE INVENTORY ~~~");
 	updateInventoryItemUI();
 	updateInventoryVariableUI();
 }
@@ -4819,12 +4102,12 @@ function updateInventoryItemUI(){
 		}
 	}
 
-	console.log("UPDATE!!!!");
+	// console.log("UPDATE!!!!");
 	for(id in item) {
 		var itemName = item[id].name != null ? item[id].name : "item " + id;
-		console.log( id );
-		console.log( player() );
-		console.log( player().inventory );
+		// console.log( id );
+		// console.log( player() );
+		// console.log( player().inventory );
 		var itemCount = player().inventory[id] != undefined ? parseFloat( player().inventory[id] ) : 0;
 
 		var itemDiv = document.createElement("div");
@@ -4976,7 +4259,7 @@ function updateInventoryVariableUI(){
 		addVarEl.title = "add new variable";
 		addVarEl.appendChild( createIconElement("add") );
 		var addVarText = document.createElement("span");
-		addVarText.innerText = "add variable";
+		addVarText.innerText = localization.GetStringOrFallback("variable_add", "add variable");
 		addVarEl.appendChild( addVarText );
 		addVarEl.addEventListener('click', function() {
 			viewport.removeChild(addVarEl);
@@ -5046,4 +4329,132 @@ function chooseExportSizeFull() {
 function chooseExportSizeFixed() {
 	isFixedSize = true;
 	document.getElementById("exportSizeFixedInputSpan").style.display = "inline-block";
+}
+
+// LOCALIZATION
+var localization;
+function on_change_language(e) {
+	localization.ChangeLanguage(e.target.value);
+	pickDefaultFontForLanguage(e.target.value);
+
+	// update title in new language IF the user hasn't made any changes to the default title
+	if (localization.LocalizationContains("default_title", title)) {
+		// TODO : localize default_title
+		title = localization.GetStringOrFallback("default_title", "Write your game's title here");
+		document.getElementById("titleText").value = title;
+	}
+	refreshGameData();
+}
+
+function pickDefaultFontForLanguage(lang) {
+	// TODO : switch to asian characters when we get asian language translations of editor
+	if (lang === "en") {
+		switchFont("ascii_small");
+	}
+	else {
+		switchFont("unicode_european_small");
+	}
+	updateFontSelectUI();
+	resetMissingCharacterWarning();
+}
+
+function on_change_font(e) {
+	if (e.target.value != "custom") {
+		switchFont(e.target.value);
+	}
+	else {
+		if (localStorage.custom_font != null) {
+			var fontStorage = JSON.parse(localStorage.custom_font);
+			switchFont(fontStorage.name);
+		}
+		else {
+			// fallback
+			switchFont("ascii_small");
+		}
+	}
+	updateFontDescriptionUI();
+	resetMissingCharacterWarning();
+}
+
+function switchFont(newFontName) {
+	fontName = newFontName;
+
+	// hacky - move the font data from the editor to the engine
+	fontManager.AddResource(fontName + fontManager.GetExtension(), editorFontManager.GetData(fontName));
+
+	refreshGameData()
+}
+
+function initLanguageOptions() {
+	localization.Localize();
+
+	var languageSelect = document.getElementById("languageSelect");
+	languageSelect.innerHTML = "";
+
+	var languageList = localization.GetLanguageList();
+	for (var i = 0; i < languageList.length; i++) {
+		var option = document.createElement("option");
+		option.innerText = languageList[i].name;
+		option.value = languageList[i].id;
+		option.selected = languageList[i].id === localization.GetLanguage();
+		languageSelect.add(option);
+	}
+}
+
+/* DOCS */
+function toggleDialogDocs(e) {
+	console.log("SHOW DOCS");
+	console.log(e.target.checked);
+	if (e.target.checked) {
+		document.getElementById("dialogDocs").style.display = "block";
+		document.getElementById("dialogToggleDocsShowText").style.display = "none";
+		document.getElementById("dialogToggleDocsHideText").style.display = "inline";
+	}
+	else {
+		document.getElementById("dialogDocs").style.display = "none";
+		document.getElementById("dialogToggleDocsShowText").style.display = "inline";
+		document.getElementById("dialogToggleDocsHideText").style.display = "none";
+	}
+}
+
+/* WARNINGS */
+// TODO : turn this into a real system someday instead of hard-coded nonsense
+var missingCharacterWarningState = {
+	showedWarning : false,
+	curFont : null
+}
+
+function resetMissingCharacterWarning() {
+	// missingCharacterWarningState.showedWarning = false; // should I really do this every time?
+	missingCharacterWarningState.curFont = editorFontManager.Get( fontName );
+}
+
+function tryWarnAboutMissingCharacters(text) {
+	if (missingCharacterWarningState.showedWarning) {
+		return;
+	}
+
+	var hasMissingCharacter = false;
+
+	console.log(missingCharacterWarningState.curFont.getData());
+
+	for (var i = 0; i < text.length; i++) {
+		var character = text[i];
+		if (!missingCharacterWarningState.curFont.hasChar(character)) {
+			hasMissingCharacter = true;
+		}
+	}
+
+	if (hasMissingCharacter) {
+		showFontMissingCharacterWarning();
+	}
+}
+
+function showFontMissingCharacterWarning() {
+	document.getElementById("fontMissingCharacter").style.display = "block";
+	missingCharacterWarningState.showedWarning = true;
+}
+
+function hideFontMissingCharacterWarning() {
+	document.getElementById("fontMissingCharacter").style.display = "none";
 }
